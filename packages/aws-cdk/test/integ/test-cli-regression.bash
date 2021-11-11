@@ -73,5 +73,13 @@ function run_regression_against_framework_version() {
 
   # the framework version to use is determined by the caller as the first argument.
   # its a variable name indirection.
-  FRAMEWORK_VERSION=${!FRAMEWORK_VERSION_IDENTIFIER} ${integ_under_test}/test.sh
+  export FRAMEWORK_VERSION=${!FRAMEWORK_VERSION_IDENTIFIER}
+
+  # Determine the integ test versions by reading the 'package.json' of the containing CLI package
+  TEST_VERSION=$(node -p "require('${integdir}/../../package.json').version" || echo "???")
+
+  # Show the versions we settled on
+  echo "♈️ Regression testing [cli $(cdk --version)] against [framework ${FRAMEWORK_VERSION}] using [tests ${TEST_VERSION}]"
+
+  ${integ_under_test}/test.sh
 }
