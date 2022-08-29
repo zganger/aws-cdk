@@ -1,4 +1,5 @@
 import * as cdk from '@aws-cdk/core';
+import { Construct } from 'constructs';
 import { CfnRoute } from './appmesh.generated';
 import { HeaderMatch } from './header-match';
 import { HttpRouteMethod } from './http-route-method';
@@ -7,10 +8,6 @@ import { validateGrpcRouteMatch, validateGrpcMatchArrayLength, validateHttpMatch
 import { QueryParameterMatch } from './query-parameter-match';
 import { GrpcTimeout, HttpTimeout, Protocol, TcpTimeout } from './shared-interfaces';
 import { IVirtualNode } from './virtual-node';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct } from '@aws-cdk/core';
 
 /**
  * Properties for the Weighted Targets in the route
@@ -120,8 +117,8 @@ export interface GrpcRouteMatch {
  */
 export interface RouteSpecOptionsBase {
   /**
-   * The priority for the route. Routes are matched based on the specified
-   * value, where 0 is the highest priority.
+   * The priority for the route. When a Virtual Router has multiple routes, route match is performed in the
+   * order of specified value, where 0 is the highest priority, and first matched route is selected.
    *
    * @default - no particular priority
    */
@@ -357,8 +354,8 @@ export interface RouteSpecConfig {
   readonly tcpRouteSpec?: CfnRoute.TcpRouteProperty;
 
   /**
-   * The priority for the route. Routes are matched based on the specified
-   * value, where 0 is the highest priority.
+   * The priority for the route. When a Virtual Router has multiple routes, route match is performed in the
+   * order of specified value, where 0 is the highest priority, and first matched route is selected.
    *
    * @default - no particular priority
    */
@@ -588,7 +585,7 @@ function renderWeightedTargets(weightedTargets: WeightedTarget[]): CfnRoute.Weig
   for (const t of weightedTargets) {
     renderedTargets.push({
       virtualNode: t.virtualNode.virtualNodeName,
-      weight: t.weight || 1,
+      weight: t.weight == undefined ? 1 : t.weight,
     });
   }
   return renderedTargets;

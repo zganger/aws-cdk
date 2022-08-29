@@ -1,12 +1,9 @@
 import * as iam from '@aws-cdk/aws-iam';
 import * as secretsmanager from '@aws-cdk/aws-secretsmanager';
+import { Construct } from 'constructs';
 import { IEngine } from './engine';
 import { EngineVersion } from './engine-version';
 import { IParameterGroup, ParameterGroup } from './parameter-group';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct } from '@aws-cdk/core';
 
 /**
  * The extra options passed to the {@link IClusterEngine.bindToCluster} method.
@@ -98,6 +95,14 @@ export interface IClusterEngine extends IEngine {
   readonly supportedLogTypes: string[];
 
   /**
+   * Whether the IAM Roles used for data importing and exporting need to be combined for this Engine,
+   * or can they be kept separate.
+   *
+   * @default false
+   */
+  readonly combineImportAndExportRoles?: boolean;
+
+  /**
    * Method called when the engine is used to create a new cluster.
    */
   bindToCluster(scope: Construct, options: ClusterEngineBindOptions): ClusterEngineConfig;
@@ -154,11 +159,13 @@ interface MysqlClusterEngineBaseProps {
   readonly engineType: string;
   readonly engineVersion?: EngineVersion;
   readonly defaultMajorVersion: string;
+  readonly combineImportAndExportRoles?: boolean;
 }
 
 abstract class MySqlClusterEngineBase extends ClusterEngineBase {
   public readonly engineFamily = 'MYSQL';
   public readonly supportedLogTypes: string[] = ['error', 'general', 'slowquery', 'audit'];
+  public readonly combineImportAndExportRoles?: boolean;
 
   constructor(props: MysqlClusterEngineBaseProps) {
     super({
@@ -167,6 +174,7 @@ abstract class MySqlClusterEngineBase extends ClusterEngineBase {
       multiUserRotationApplication: secretsmanager.SecretRotationApplication.MYSQL_ROTATION_MULTI_USER,
       engineVersion: props.engineVersion ? props.engineVersion : { majorVersion: props.defaultMajorVersion },
     });
+    this.combineImportAndExportRoles = props.combineImportAndExportRoles;
   }
 
   public bindToCluster(scope: Construct, options: ClusterEngineBindOptions): ClusterEngineConfig {
@@ -177,10 +185,18 @@ abstract class MySqlClusterEngineBase extends ClusterEngineBase {
       })
       : config.parameterGroup);
     if (options.s3ImportRole) {
-      parameterGroup?.addParameter('aurora_load_from_s3_role', options.s3ImportRole.roleArn);
+      // versions which combine the import and export Roles (right now, this is only 8.0)
+      // require a different parameter name (identical for both import and export)
+      const s3ImportParam = this.combineImportAndExportRoles
+        ? 'aws_default_s3_role'
+        : 'aurora_load_from_s3_role';
+      parameterGroup?.addParameter(s3ImportParam, options.s3ImportRole.roleArn);
     }
     if (options.s3ExportRole) {
-      parameterGroup?.addParameter('aurora_select_into_s3_role', options.s3ExportRole.roleArn);
+      const s3ExportParam = this.combineImportAndExportRoles
+        ? 'aws_default_s3_role'
+        : 'aurora_select_into_s3_role';
+      parameterGroup?.addParameter(s3ExportParam, options.s3ExportRole.roleArn);
     }
 
     return {
@@ -223,6 +239,12 @@ export class AuroraEngineVersion {
   public static readonly VER_1_22_1_3 = AuroraEngineVersion.builtIn_5_6('1.22.1.3');
   /** Version "5.6.mysql_aurora.1.22.2". */
   public static readonly VER_1_22_2 = AuroraEngineVersion.builtIn_5_6('1.22.2');
+  /** Version "5.6.mysql_aurora.1.22.3". */
+  public static readonly VER_1_22_3 = AuroraEngineVersion.builtIn_5_6('1.22.3');
+  /** Version "5.6.mysql_aurora.1.22.4". */
+  public static readonly VER_1_22_4 = AuroraEngineVersion.builtIn_5_6('1.22.4');
+  /** Version "5.6.mysql_aurora.1.22.5". */
+  public static readonly VER_1_22_5 = AuroraEngineVersion.builtIn_5_6('1.22.5');
 
   /**
    * Create a new AuroraEngineVersion with an arbitrary version.
@@ -284,6 +306,8 @@ class AuroraClusterEngine extends MySqlClusterEngineBase {
 /**
  * The versions for the Aurora MySQL cluster engine
  * (those returned by {@link DatabaseClusterEngine.auroraMysql}).
+ *
+ * https://docs.aws.amazon.com/AmazonRDS/latest/AuroraMySQLReleaseNotes/Welcome.html
  */
 export class AuroraMysqlEngineVersion {
   /** Version "5.7.12". */
@@ -322,22 +346,48 @@ export class AuroraMysqlEngineVersion {
   public static readonly VER_2_07_1 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.1');
   /** Version "5.7.mysql_aurora.2.07.2". */
   public static readonly VER_2_07_2 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.2');
+  /** Version "5.7.mysql_aurora.2.07.3". */
+  public static readonly VER_2_07_3 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.3');
+  /** Version "5.7.mysql_aurora.2.07.4". */
+  public static readonly VER_2_07_4 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.4');
+  /** Version "5.7.mysql_aurora.2.07.5". */
+  public static readonly VER_2_07_5 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.5');
+  /** Version "5.7.mysql_aurora.2.07.6". */
+  public static readonly VER_2_07_6 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.6');
+  /** Version "5.7.mysql_aurora.2.07.7". */
+  public static readonly VER_2_07_7 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.7');
+  /** Version "5.7.mysql_aurora.2.07.8". */
+  public static readonly VER_2_07_8 = AuroraMysqlEngineVersion.builtIn_5_7('2.07.8');
   /** Version "5.7.mysql_aurora.2.08.0". */
   public static readonly VER_2_08_0 = AuroraMysqlEngineVersion.builtIn_5_7('2.08.0');
   /** Version "5.7.mysql_aurora.2.08.1". */
   public static readonly VER_2_08_1 = AuroraMysqlEngineVersion.builtIn_5_7('2.08.1');
   /** Version "5.7.mysql_aurora.2.08.2". */
   public static readonly VER_2_08_2 = AuroraMysqlEngineVersion.builtIn_5_7('2.08.2');
+  /** Version "5.7.mysql_aurora.2.08.3". */
+  public static readonly VER_2_08_3 = AuroraMysqlEngineVersion.builtIn_5_7('2.08.3');
+  /** Version "5.7.mysql_aurora.2.08.4". */
+  public static readonly VER_2_08_4 = AuroraMysqlEngineVersion.builtIn_5_7('2.08.4');
   /** Version "5.7.mysql_aurora.2.09.0". */
   public static readonly VER_2_09_0 = AuroraMysqlEngineVersion.builtIn_5_7('2.09.0');
   /** Version "5.7.mysql_aurora.2.09.1". */
   public static readonly VER_2_09_1 = AuroraMysqlEngineVersion.builtIn_5_7('2.09.1');
   /** Version "5.7.mysql_aurora.2.09.2". */
   public static readonly VER_2_09_2 = AuroraMysqlEngineVersion.builtIn_5_7('2.09.2');
+  /** Version "5.7.mysql_aurora.2.09.3". */
+  public static readonly VER_2_09_3 = AuroraMysqlEngineVersion.builtIn_5_7('2.09.3');
   /** Version "5.7.mysql_aurora.2.10.0". */
   public static readonly VER_2_10_0 = AuroraMysqlEngineVersion.builtIn_5_7('2.10.0');
   /** Version "5.7.mysql_aurora.2.10.1". */
   public static readonly VER_2_10_1 = AuroraMysqlEngineVersion.builtIn_5_7('2.10.1');
+  /** Version "5.7.mysql_aurora.2.10.2". */
+  public static readonly VER_2_10_2 = AuroraMysqlEngineVersion.builtIn_5_7('2.10.2');
+  /** Version "8.0.mysql_aurora.3.01.0". */
+  public static readonly VER_3_01_0 = AuroraMysqlEngineVersion.builtIn_8_0('3.01.0');
+  /** Version "8.0.mysql_aurora.3.01.1". */
+  public static readonly VER_3_01_1 = AuroraMysqlEngineVersion.builtIn_8_0('3.01.1');
+  /** Version "8.0.mysql_aurora.3.02.0". */
+  public static readonly VER_3_02_0 = AuroraMysqlEngineVersion.builtIn_8_0('3.02.0');
 
   /**
    * Create a new AuroraMysqlEngineVersion with an arbitrary version.
@@ -355,14 +405,29 @@ export class AuroraMysqlEngineVersion {
     return new AuroraMysqlEngineVersion(`5.7.${addStandardPrefix ? 'mysql_aurora.' : ''}${minorVersion}`);
   }
 
+  private static builtIn_8_0(minorVersion: string): AuroraMysqlEngineVersion {
+    // 8.0 of the MySQL engine needs to combine the import and export Roles
+    return new AuroraMysqlEngineVersion(`8.0.mysql_aurora.${minorVersion}`, '8.0', true);
+  }
+
   /** The full version string, for example, "5.7.mysql_aurora.1.78.3.6". */
   public readonly auroraMysqlFullVersion: string;
-  /** The major version of the engine. Currently, it's always "5.7". */
+  /** The major version of the engine. Currently, it's either "5.7", or "8.0". */
   public readonly auroraMysqlMajorVersion: string;
+  /**
+   * Whether this version requires combining the import and export IAM Roles.
+   *
+   * @internal
+   */
+  public readonly _combineImportAndExportRoles?: boolean;
 
-  private constructor(auroraMysqlFullVersion: string, auroraMysqlMajorVersion: string = '5.7') {
+  private constructor(
+    auroraMysqlFullVersion: string, auroraMysqlMajorVersion: string = '5.7',
+    combineImportAndExportRoles?: boolean,
+  ) {
     this.auroraMysqlFullVersion = auroraMysqlFullVersion;
     this.auroraMysqlMajorVersion = auroraMysqlMajorVersion;
+    this._combineImportAndExportRoles = combineImportAndExportRoles;
   }
 }
 
@@ -386,6 +451,7 @@ class AuroraMysqlClusterEngine extends MySqlClusterEngineBase {
         }
         : undefined,
       defaultMajorVersion: '5.7',
+      combineImportAndExportRoles: version?._combineImportAndExportRoles,
     });
   }
 
@@ -417,6 +483,8 @@ export interface AuroraPostgresEngineFeatures {
 /**
  * The versions for the Aurora PostgreSQL cluster engine
  * (those returned by {@link DatabaseClusterEngine.auroraPostgres}).
+ *
+ * https://docs.aws.amazon.com/AmazonRDS/latest/AuroraPostgreSQLReleaseNotes/AuroraPostgreSQL.Updates.html
  */
 export class AuroraPostgresEngineVersion {
   /** Version "9.6.8". */
@@ -455,6 +523,12 @@ export class AuroraPostgresEngineVersion {
   public static readonly VER_10_16 = AuroraPostgresEngineVersion.of('10.16', '10', { s3Import: true, s3Export: true });
   /** Version "10.18". */
   public static readonly VER_10_18 = AuroraPostgresEngineVersion.of('10.18', '10', { s3Import: true, s3Export: true });
+  /** Version "10.19". */
+  public static readonly VER_10_19 = AuroraPostgresEngineVersion.of('10.19', '10', { s3Import: true, s3Export: true });
+  /** Version "10.20". */
+  public static readonly VER_10_20 = AuroraPostgresEngineVersion.of('10.20', '10', { s3Import: true, s3Export: true });
+  /** Version "10.21". */
+  public static readonly VER_10_21 = AuroraPostgresEngineVersion.of('10.21', '10', { s3Import: true, s3Export: true });
   /** Version "11.4". */
   public static readonly VER_11_4 = AuroraPostgresEngineVersion.of('11.4', '11', { s3Import: true });
   /** Version "11.6". */
@@ -469,16 +543,36 @@ export class AuroraPostgresEngineVersion {
   public static readonly VER_11_11 = AuroraPostgresEngineVersion.of('11.11', '11', { s3Import: true, s3Export: true });
   /** Version "11.13". */
   public static readonly VER_11_13 = AuroraPostgresEngineVersion.of('11.13', '11', { s3Import: true, s3Export: true });
+  /** Version "11.14". */
+  public static readonly VER_11_14 = AuroraPostgresEngineVersion.of('11.14', '11', { s3Import: true, s3Export: true });
+  /** Version "11.15". */
+  public static readonly VER_11_15 = AuroraPostgresEngineVersion.of('11.15', '11', { s3Import: true, s3Export: true });
+  /** Version "11.16". */
+  public static readonly VER_11_16 = AuroraPostgresEngineVersion.of('11.16', '11', { s3Import: true, s3Export: true });
   /** Version "12.4". */
   public static readonly VER_12_4 = AuroraPostgresEngineVersion.of('12.4', '12', { s3Import: true, s3Export: true });
   /** Version "12.6". */
   public static readonly VER_12_6 = AuroraPostgresEngineVersion.of('12.6', '12', { s3Import: true, s3Export: true });
   /** Version "12.8". */
   public static readonly VER_12_8 = AuroraPostgresEngineVersion.of('12.8', '12', { s3Import: true, s3Export: true });
+  /** Version "12.8". */
+  public static readonly VER_12_9 = AuroraPostgresEngineVersion.of('12.9', '12', { s3Import: true, s3Export: true });
+  /** Version "12.10". */
+  public static readonly VER_12_10 = AuroraPostgresEngineVersion.of('12.10', '12', { s3Import: true, s3Export: true });
+  /** Version "12.11". */
+  public static readonly VER_12_11 = AuroraPostgresEngineVersion.of('12.11', '12', { s3Import: true, s3Export: true });
   /** Version "13.3". */
   public static readonly VER_13_3 = AuroraPostgresEngineVersion.of('13.3', '13', { s3Import: true, s3Export: true });
   /** Version "13.4". */
   public static readonly VER_13_4 = AuroraPostgresEngineVersion.of('13.4', '13', { s3Import: true, s3Export: true });
+  /** Version "13.5". */
+  public static readonly VER_13_5 = AuroraPostgresEngineVersion.of('13.5', '13', { s3Import: true, s3Export: true });
+  /** Version "13.6". */
+  public static readonly VER_13_6 = AuroraPostgresEngineVersion.of('13.6', '13', { s3Import: true, s3Export: true });
+  /** Version "13.7". */
+  public static readonly VER_13_7 = AuroraPostgresEngineVersion.of('13.7', '13', { s3Import: true, s3Export: true });
+  /** Version "14.3". */
+  public static readonly VER_14_3 = AuroraPostgresEngineVersion.of('14.3', '14', { s3Import: true, s3Export: true });
 
   /**
    * Create a new AuroraPostgresEngineVersion with an arbitrary version.

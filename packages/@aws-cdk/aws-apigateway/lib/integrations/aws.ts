@@ -1,4 +1,6 @@
 import * as cdk from '@aws-cdk/core';
+import { ArnFormat } from '@aws-cdk/core';
+import { IConstruct } from 'constructs';
 import { Integration, IntegrationConfig, IntegrationOptions, IntegrationType } from '../integration';
 import { Method } from '../method';
 import { parseAwsApiCall } from '../util';
@@ -76,7 +78,7 @@ export interface AwsIntegrationProps {
  * technology.
  */
 export class AwsIntegration extends Integration {
-  private scope?: cdk.IConstruct;
+  private scope?: IConstruct;
 
   constructor(props: AwsIntegrationProps) {
     const backend = props.subdomain ? `${props.subdomain}.${props.service}` : props.service;
@@ -92,7 +94,7 @@ export class AwsIntegration extends Integration {
             service: 'apigateway',
             account: backend,
             resource: apiType,
-            sep: '/',
+            arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
             resourceName: apiValue,
             region: props.region,
           });

@@ -220,17 +220,13 @@ export class Duration {
   }
 
   /**
-   * Returns a string representation of this `Duration` that is also a Token that cannot be successfully resolved. This
-   * protects users against inadvertently stringifying a `Duration` object, when they should have called one of the
-   * `to*` methods instead.
+   * Returns a string representation of this `Duration`
+   *
+   * This is is never the right function to use when you want to use the `Duration`
+   * object in a template. Use `toSeconds()`, `toMinutes()`, `toDays()`, etc. instead.
    */
   public toString(): string {
-    return Token.asString(
-      () => {
-        throw new Error('Duration.toString() was used, but .toSeconds, .toMinutes or .toDays should have been called instead');
-      },
-      { displayHint: `${this.amount} ${this.unit.label}` },
-    );
+    return `Duration.${this.unit.label}(${this.amount})`;
   }
 
   /**
@@ -317,10 +313,14 @@ class TimeUnit {
 }
 
 function convert(amount: number, fromUnit: TimeUnit, toUnit: TimeUnit, { integral = true }: TimeConversionOptions) {
-  if (fromUnit.inMillis === toUnit.inMillis) { return amount; }
-
+  if (fromUnit.inMillis === toUnit.inMillis) {
+    if (integral && !Token.isUnresolved(amount) && !Number.isInteger(amount)) {
+      throw new Error(`${amount} must be a whole number of ${toUnit}.`);
+    }
+    return amount;
+  }
   if (Token.isUnresolved(amount)) {
-    throw new Error(`Unable to perform time unit conversion on un-resolved token ${amount}.`);
+    throw new Error(`Duration must be specified as 'Duration.${toUnit}()' here since its value comes from a token and cannot be converted (got Duration.${fromUnit})`);
   }
   const value = (amount * fromUnit.inMillis) / toUnit.inMillis;
   if (!Number.isInteger(value) && integral) {

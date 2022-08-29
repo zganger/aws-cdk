@@ -1,11 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { expect as ourExpect, haveResource } from '@aws-cdk/assert-internal';
+import { Template } from '@aws-cdk/assertions';
 import * as iam from '@aws-cdk/aws-iam';
-import * as cxschema from '@aws-cdk/cloud-assembly-schema';
-import { App, Stack } from '@aws-cdk/core';
-import * as cxapi from '@aws-cdk/cx-api';
 import { testFutureBehavior } from '@aws-cdk/cdk-build-tools/lib/feature-flag';
+import * as cxschema from '@aws-cdk/cloud-assembly-schema';
+import { App, Stack, DefaultStackSynthesizer } from '@aws-cdk/core';
+import * as cxapi from '@aws-cdk/cx-api';
 import { TarballImageAsset } from '../lib';
 
 /* eslint-disable quote-props */
@@ -64,7 +64,7 @@ describe('image asset', () => {
     asset.repository.grantPull(user);
 
     // THEN
-    ourExpect(stack).to(haveResource('AWS::IAM::Policy', {
+    Template.fromStack(stack).hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
         'Statement': [
           {
@@ -112,7 +112,7 @@ describe('image asset', () => {
           'Ref': 'MyUserDC45028B',
         },
       ],
-    }));
+    });
   });
 
   testFutureBehavior('docker directory is staged if asset staging is enabled', flags, App, (app) => {
@@ -123,7 +123,7 @@ describe('image asset', () => {
 
     const session = app.synth();
 
-    expect(fs.existsSync(path.join(session.directory, `asset.${image.assetHash}.tar`))).toBeDefined();
+    expect(fs.existsSync(path.join(session.directory, `asset.${image.assetHash}.tar`))).toBe(true);
   });
 
   test('fails if the file does not exist', () => {
@@ -136,6 +136,32 @@ describe('image asset', () => {
     }).toThrow(/Cannot find file at/);
 
   });
+
+  describe('imageTag is correct for different stack synthesizers', () => {
+    const stack1 = new Stack();
+    const stack2 = new Stack(undefined, undefined, {
+      synthesizer: new DefaultStackSynthesizer({
+        dockerTagPrefix: 'banana',
+      }),
+    });
+    const asset1 = new TarballImageAsset(stack1, 'MyAsset', {
+      tarballFile: 'test/demo-tarball/empty.tar',
+    });
+    const asset2 = new TarballImageAsset(stack2, 'MyAsset', {
+      tarballFile: 'test/demo-tarball/empty.tar',
+    });
+
+    test('stack with default synthesizer', () => {
+      expect(asset1.assetHash).toEqual('95c924c84f5d023be4edee540cb2cb401a49f115d01ed403b288f6cb412771df');
+      expect(asset1.imageTag).toEqual('95c924c84f5d023be4edee540cb2cb401a49f115d01ed403b288f6cb412771df');
+    });
+
+    test('stack with overwritten synthesizer', () => {
+      expect(asset2.assetHash).toEqual('95c924c84f5d023be4edee540cb2cb401a49f115d01ed403b288f6cb412771df');
+      expect(asset2.imageTag).toEqual('banana95c924c84f5d023be4edee540cb2cb401a49f115d01ed403b288f6cb412771df');
+    });
+  });
+
 });
 
 function isAssetManifest(x: cxapi.CloudArtifact): x is cxapi.AssetManifestArtifact {

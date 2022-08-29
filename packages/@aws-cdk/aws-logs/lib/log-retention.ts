@@ -2,12 +2,9 @@ import * as path from 'path';
 import * as iam from '@aws-cdk/aws-iam';
 import * as s3_assets from '@aws-cdk/aws-s3-assets';
 import * as cdk from '@aws-cdk/core';
+import { ArnFormat } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { RetentionDays } from './log-group';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct as CoreConstruct } from '@aws-cdk/core';
 
 /**
  * Construction properties for a LogRetention.
@@ -42,6 +39,12 @@ export interface LogRetentionProps {
    * @default - AWS SDK default retry options
    */
   readonly logRetentionRetryOptions?: LogRetentionRetryOptions;
+
+  /**
+   * The removalPolicy for the log group when the stack is deleted
+   * @default RemovalPolicy.RETAIN
+   */
+  readonly removalPolicy?: cdk.RemovalPolicy;
 }
 
 /**
@@ -69,7 +72,7 @@ export interface LogRetentionRetryOptions {
  * Log group can be created in the region that is different from stack region by
  * specifying `logGroupRegion`
  */
-export class LogRetention extends CoreConstruct {
+export class LogRetention extends Construct {
 
   /**
    * The ARN of the LogGroup.
@@ -96,6 +99,7 @@ export class LogRetention extends CoreConstruct {
           base: retryOptions.base?.toMilliseconds(),
         } : undefined,
         RetentionInDays: props.retention === RetentionDays.INFINITE ? undefined : props.retention,
+        RemovalPolicy: props.removalPolicy,
       },
     });
 
@@ -107,7 +111,7 @@ export class LogRetention extends CoreConstruct {
       service: 'logs',
       resource: 'log-group',
       resourceName: `${logGroupName}:*`,
-      sep: ':',
+      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
     });
   }
 
@@ -128,7 +132,7 @@ export class LogRetention extends CoreConstruct {
 /**
  * Private provider Lambda function to support the log retention custom resource.
  */
-class LogRetentionFunction extends CoreConstruct implements cdk.ITaggable {
+class LogRetentionFunction extends Construct implements cdk.ITaggable {
   public readonly functionArn: cdk.Reference;
 
   public readonly tags: cdk.TagManager = new cdk.TagManager(cdk.TagType.KEY_VALUE, 'AWS::Lambda::Function');
@@ -154,6 +158,29 @@ class LogRetentionFunction extends CoreConstruct implements cdk.ITaggable {
       // creates a CF circular dependency.
       resources: ['*'],
     }));
+    // if removalPolicy is DESTROY, add action for DeleteLogGroup and DeleteLogStream
+    if (props.removalPolicy === cdk.RemovalPolicy.DESTROY) {
+      role.addToPrincipalPolicy(new iam.PolicyStatement({
+        actions: ['logs:DeleteLogGroup'],
+        //Only allow deleting the specific log group.
+        resources: [cdk.Stack.of(this).formatArn({
+          service: 'logs',
+          resource: 'log-group',
+          resourceName: `${props.logGroupName}:*`,
+          arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+        })],
+      }));
+      role.addToPrincipalPolicy(new iam.PolicyStatement({
+        actions: ['logs:DeleteLogStream'],
+        //Only allow deleting the specific log group.
+        resources: [cdk.Stack.of(this).formatArn({
+          service: 'logs',
+          resource: `log-group:${props.logGroupName}:log-stream`,
+          resourceName: '*',
+          arnFormat: ArnFormat.COLON_RESOURCE_NAME,
+        })],
+      }));
+    }
 
     // Lambda function
     const resource = new cdk.CfnResource(this, 'Resource', {
@@ -171,12 +198,14 @@ class LogRetentionFunction extends CoreConstruct implements cdk.ITaggable {
     });
     this.functionArn = resource.getAtt('Arn');
 
+    asset.addResourceMetadata(resource, 'Code');
+
     // Function dependencies
     role.node.children.forEach((child) => {
       if (cdk.CfnResource.isCfnResource(child)) {
         resource.addDependsOn(child);
       }
-      if (cdk.Construct.isConstruct(child) && child.node.defaultChild && cdk.CfnResource.isCfnResource(child.node.defaultChild)) {
+      if (Construct.isConstruct(child) && child.node.defaultChild && cdk.CfnResource.isCfnResource(child.node.defaultChild)) {
         resource.addDependsOn(child.node.defaultChild);
       }
     });

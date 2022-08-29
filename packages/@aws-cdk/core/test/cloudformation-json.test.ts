@@ -79,11 +79,11 @@ describe('tokens that return literals', () => {
 
   test('String-encoded lazies do not have quotes applied if they return objects', () => {
     // This is unfortunately crazy behavior, but we have some clients already taking a
-    // dependency on the fact that `Lazy.stringValue({ produce: () => [...some list...] })`
+    // dependency on the fact that `Lazy.string({ produce: () => [...some list...] })`
     // does not apply quotes but just renders the list.
 
     // GIVEN
-    const someList = Lazy.stringValue({ produce: () => [1, 2, 3] as any });
+    const someList = Lazy.string({ produce: () => [1, 2, 3] as any });
 
     // WHEN
     expect(evaluateCFN(stack.resolve(stack.toJsonString({ someList })))).toEqual('{"someList":[1,2,3]}');
@@ -123,7 +123,6 @@ describe('tokens that return literals', () => {
     });
   });
 
-
   test('tokens in strings survive additional TokenJSON.stringification()', () => {
     // GIVEN
     for (const token of tokensThatResolveTo('pong!')) {
@@ -137,7 +136,7 @@ describe('tokens that return literals', () => {
 
   test('Doubly nested strings evaluate correctly in JSON context', () => {
     // WHEN
-    const fidoSays = Lazy.stringValue({ produce: () => 'woof' });
+    const fidoSays = Lazy.string({ produce: () => 'woof' });
 
     // WHEN
     const resolved = stack.resolve(stack.toJsonString({
@@ -150,7 +149,7 @@ describe('tokens that return literals', () => {
 
   test('Quoted strings in embedded JSON context are escaped', () => {
     // GIVEN
-    const fidoSays = Lazy.stringValue({ produce: () => '"woof"' });
+    const fidoSays = Lazy.string({ produce: () => '"woof"' });
 
     // WHEN
     const resolved = stack.resolve(stack.toJsonString({
@@ -160,7 +159,6 @@ describe('tokens that return literals', () => {
     // THEN
     expect(evaluateCFN(resolved)).toEqual('{"information":"Did you know that Fido says: \\"woof\\""}');
   });
-
 });
 
 describe('tokens returning CloudFormation intrinsics', () => {
@@ -322,18 +320,16 @@ describe('tokens returning CloudFormation intrinsics', () => {
 
     // THEN
     const asm = app.synth();
-    expect(asm.getStackByName('Stack2').template).toEqual({
-      Outputs: {
-        Stack1Id: {
-          Value: {
-            'Fn::Join': ['', [
-              '{"Stack1Id":"',
-              { 'Fn::ImportValue': 'Stack1:ExportsOutputRefAWSStackIdB2DD5BAA' },
-              '","Stack2Id":"',
-              { Ref: 'AWS::StackId' },
-              '"}',
-            ]],
-          },
+    expect(asm.getStackByName('Stack2').template?.Outputs).toEqual({
+      Stack1Id: {
+        Value: {
+          'Fn::Join': ['', [
+            '{"Stack1Id":"',
+            { 'Fn::ImportValue': 'Stack1:ExportsOutputRefAWSStackIdB2DD5BAA' },
+            '","Stack2Id":"',
+            { Ref: 'AWS::StackId' },
+            '"}',
+          ]],
         },
       },
     });
@@ -407,7 +403,6 @@ test('JSON strings nested inside JSON strings have correct quoting', () => {
   // Is this even correct? Let's ask JavaScript because I have trouble reading this many backslashes.
   expect(JSON.parse(JSON.parse(evaluated).payload).message).toEqual('I am in account "1234"');
 });
-
 
 /**
  * Return two Tokens, one of which evaluates to a Token directly, one which evaluates to it lazily

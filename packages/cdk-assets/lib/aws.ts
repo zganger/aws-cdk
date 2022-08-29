@@ -8,6 +8,7 @@ export interface IAws {
   discoverDefaultRegion(): Promise<string>;
   discoverCurrentAccount(): Promise<Account>;
 
+  discoverTargetAccount(options: ClientOptions): Promise<Account>;
   s3Client(options: ClientOptions): Promise<AWS.S3>;
   ecrClient(options: ClientOptions): Promise<AWS.ECR>;
   secretsManagerClient(options: ClientOptions): Promise<AWS.SecretsManager>;
@@ -94,6 +95,18 @@ export class DefaultAwsClient implements IAws {
     return this.account;
   }
 
+  public async discoverTargetAccount(options: ClientOptions): Promise<Account> {
+    const sts = new this.AWS.STS(await this.awsOptions(options));
+    const response = await sts.getCallerIdentity().promise();
+    if (!response.Account || !response.Arn) {
+      throw new Error(`Unrecognized reponse from STS: '${JSON.stringify(response)}'`);
+    }
+    return {
+      accountId: response.Account!,
+      partition: response.Arn!.split(':')[1],
+    };
+  }
+
   private async awsOptions(options: ClientOptions) {
     let credentials;
 
@@ -137,6 +150,10 @@ export class DefaultAwsClient implements IAws {
  * @see https://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html#API_AssumeRole_RequestParameters
  */
 function safeUsername() {
-  return os.userInfo().username.replace(/[^\w+=,.@-]/g, '@');
+  try {
+    return os.userInfo().username.replace(/[^\w+=,.@-]/g, '@');
+  } catch (e) {
+    return 'noname';
+  }
 }
 

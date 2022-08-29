@@ -1,4 +1,5 @@
 import { Template } from '@aws-cdk/assertions';
+import * as autoscaling from '@aws-cdk/aws-autoscaling';
 import * as ec2 from '@aws-cdk/aws-ec2';
 import * as ecs from '@aws-cdk/aws-ecs';
 import * as sfn from '@aws-cdk/aws-stepfunctions';
@@ -16,9 +17,13 @@ beforeEach(() => {
   stack = new Stack();
   vpc = new ec2.Vpc(stack, 'Vpc');
   cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('Capacity', {
-    instanceType: new ec2.InstanceType('t3.medium'),
-  });
+  cluster.addAsgCapacityProvider(new ecs.AsgCapacityProvider(stack, 'Capacity', {
+    autoScalingGroup: new autoscaling.AutoScalingGroup(stack, 'ASG', {
+      vpc,
+      instanceType: new ec2.InstanceType('t3.medium'),
+      machineImage: ec2.MachineImage.latestAmazonLinux(),
+    }),
+  }));
 });
 
 test('Cannot create a Fargate task with a fargate-incompatible task definition', () => {
@@ -409,7 +414,7 @@ test('Running an EC2 Task with placement strategies', () => {
       LaunchType: 'EC2',
       TaskDefinition: 'TD',
       PlacementConstraints: [{ Type: 'memberOf', Expression: 'blieptuut' }],
-      PlacementStrategy: [{ Field: 'instanceId', Type: 'spread' }, { Field: 'cpu', Type: 'binpack' }, { Type: 'random' }],
+      PlacementStrategy: [{ Field: 'instanceId', Type: 'spread' }, { Field: 'CPU', Type: 'binpack' }, { Type: 'random' }],
     },
     Resource: {
       'Fn::Join': [

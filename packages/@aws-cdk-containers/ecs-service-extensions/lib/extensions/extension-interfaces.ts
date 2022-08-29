@@ -1,10 +1,7 @@
 import * as ecs from '@aws-cdk/aws-ecs';
 import * as cdk from '@aws-cdk/core';
-import { Service, connectToProps } from '../service';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct } from '@aws-cdk/core';
+import { Construct } from 'constructs';
+import { Service, ConnectToProps } from '../service';
 
 /**
  * The types of capacity that are supported. These capacity types may change the
@@ -115,7 +112,7 @@ export abstract class ServiceExtension {
    * the extension is told what Service it is now working on.
    */
   protected parentService!: Service;
-  protected scope!: cdk.Construct;
+  protected scope!: Construct;
 
   // A list of other extensions which want to mutate the
   // container definition for this extension.
@@ -225,9 +222,9 @@ export abstract class ServiceExtension {
    *
    * @param service - The other service to connect to.
    */
-  public connectToService(service: Service, connectToProp: connectToProps) {
+  public connectToService(service: Service, connectToProps: ConnectToProps) {
     service = service;
-    connectToProp = connectToProp;
+    connectToProps = connectToProps;
   }
 }
 

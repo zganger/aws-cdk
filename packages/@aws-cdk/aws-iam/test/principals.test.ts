@@ -1,4 +1,4 @@
-import '@aws-cdk/assert-internal/jest';
+import { Template } from '@aws-cdk/assertions';
 import { App, CfnOutput, Stack } from '@aws-cdk/core';
 import * as iam from '../lib';
 
@@ -20,7 +20,7 @@ test('use of cross-stack role reference does not lead to URLSuffix being exporte
   // THEN
   app.synth();
 
-  expect(first).toMatchTemplate({
+  Template.fromStack(first).templateMatches({
     Resources: {
       Role1ABCC5F0: {
         Type: 'AWS::IAM::Role',
@@ -103,6 +103,19 @@ test('can have multiple principals the same conditions in the same statement', (
   }));
 });
 
+test('use federated principal', () => {
+  // GIVEN
+  const stack = new Stack();
+
+  // WHEN
+  const principal = new iam.FederatedPrincipal('federated');
+
+  // THEN
+  expect(stack.resolve(principal.federated)).toStrictEqual('federated');
+  expect(stack.resolve(principal.assumeRoleAction)).toStrictEqual('sts:AssumeRole');
+  expect(stack.resolve(principal.conditions)).toStrictEqual({});
+});
+
 test('use Web Identity principal', () => {
   // GIVEN
   const stack = new Stack();
@@ -144,7 +157,7 @@ test('SAML principal', () => {
 
   // THEN
   expect(stack.resolve(principal.federated)).toStrictEqual({ Ref: 'MyProvider730BA1C8' });
-  expect(stack).toHaveResource('AWS::IAM::Role', {
+  Template.fromStack(stack).hasResourceProperties('AWS::IAM::Role', {
     AssumeRolePolicyDocument: {
       Statement: [
         {
@@ -213,7 +226,7 @@ test('PrincipalWithConditions.addCondition should work', () => {
   });
 
   // THEN
-  expect(stack).toHaveResource('AWS::IAM::Role', {
+  Template.fromStack(stack).hasResourceProperties('AWS::IAM::Role', {
     AssumeRolePolicyDocument: {
       Statement: [
         {
@@ -243,4 +256,115 @@ test('PrincipalWithConditions inherits principalAccount from AccountPrincipal ',
   // THEN
   expect(accountPrincipal.principalAccount).toStrictEqual('123456789012');
   expect(principalWithConditions.principalAccount).toStrictEqual('123456789012');
+});
+
+test('AccountPrincipal can specify an organization', () => {
+  // GIVEN
+  const stack = new Stack();
+
+  // WHEN
+  const pol = new iam.PolicyDocument({
+    statements: [
+      new iam.PolicyStatement({
+        actions: ['service:action'],
+        resources: ['*'],
+        principals: [
+          new iam.AccountPrincipal('123456789012').inOrganization('o-xxxxxxxxxx'),
+        ],
+      }),
+    ],
+  });
+
+  // THEN
+  expect(stack.resolve(pol)).toEqual({
+    Statement: [
+      {
+        Action: 'service:action',
+        Effect: 'Allow',
+        Principal: {
+          AWS: {
+            'Fn::Join': [
+              '',
+              [
+                'arn:',
+                {
+                  Ref: 'AWS::Partition',
+                },
+                ':iam::123456789012:root',
+              ],
+            ],
+          },
+        },
+        Condition: {
+          StringEquals: {
+            'aws:PrincipalOrgID': 'o-xxxxxxxxxx',
+          },
+        },
+        Resource: '*',
+      },
+    ],
+    Version: '2012-10-17',
+  });
+});
+
+test('ServicePrincipalName returns just a string representing the principal', () => {
+  // GIVEN
+  const usEastStack = new Stack(undefined, undefined, { env: { region: 'us-east-1' } });
+  const afSouthStack = new Stack(undefined, undefined, { env: { region: 'af-south-1' } });
+  const principalName = iam.ServicePrincipal.servicePrincipalName('ssm.amazonaws.com');
+
+  expect(usEastStack.resolve(principalName)).toEqual('ssm.amazonaws.com');
+  expect(afSouthStack.resolve(principalName)).toEqual('ssm.af-south-1.amazonaws.com');
+});
+
+test('Passing non-string as accountId parameter in AccountPrincipal constructor should throw error', () => {
+  expect(() => new iam.AccountPrincipal(1234)).toThrowError('accountId should be of type string');
+});
+
+test('ServicePrincipal in agnostic stack generates lookup table', () => {
+  // GIVEN
+  const stack = new Stack();
+
+  // WHEN
+  new iam.Role(stack, 'Role', {
+    assumedBy: new iam.ServicePrincipal('ssm.amazonaws.com'),
+  });
+
+  // THEN
+  const template = Template.fromStack(stack);
+  const mappings = template.findMappings('ServiceprincipalMap');
+  expect(mappings.ServiceprincipalMap['af-south-1']?.ssm).toEqual('ssm.af-south-1.amazonaws.com');
+  expect(mappings.ServiceprincipalMap['us-east-1']?.ssm).toEqual('ssm.amazonaws.com');
+});
+
+test('Can enable session tags', () => {
+  // GIVEN
+  const stack = new Stack();
+
+  // WHEN
+  new iam.Role(stack, 'Role', {
+    assumedBy: new iam.WebIdentityPrincipal(
+      'cognito-identity.amazonaws.com',
+      {
+        'StringEquals': { 'cognito-identity.amazonaws.com:aud': 'asdf' },
+        'ForAnyValue:StringLike': { 'cognito-identity.amazonaws.com:amr': 'authenticated' },
+      }).withSessionTags(),
+  });
+
+  // THEN
+  Template.fromStack(stack).hasResourceProperties('AWS::IAM::Role', {
+    AssumeRolePolicyDocument: {
+      Statement: [
+        {
+          Action: ['sts:AssumeRoleWithWebIdentity', 'sts:TagSession'],
+          Condition: {
+            'StringEquals': { 'cognito-identity.amazonaws.com:aud': 'asdf' },
+            'ForAnyValue:StringLike': { 'cognito-identity.amazonaws.com:amr': 'authenticated' },
+          },
+          Effect: 'Allow',
+          Principal: { Federated: 'cognito-identity.amazonaws.com' },
+        },
+      ],
+    },
+  });
 });

@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { CustomResourceProviderConfig, ICustomResourceProvider } from '@aws-cdk/aws-cloudformation';
 import * as ec2 from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
 import * as lambda from '@aws-cdk/aws-lambda';
@@ -8,13 +9,6 @@ import { Construct } from 'constructs';
 import * as consts from './runtime/consts';
 import { calculateRetryPolicy } from './util';
 import { WaiterStateMachine } from './waiter-state-machine';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { CustomResourceProviderConfig, ICustomResourceProvider } from '@aws-cdk/aws-cloudformation';
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main",
-// eslint-disable-next-line
-import { Construct as CoreConstruct } from '@aws-cdk/core';
 
 const RUNTIME_HANDLER_PATH = path.join(__dirname, 'runtime');
 const FRAMEWORK_HANDLER_TIMEOUT = Duration.minutes(15); // keep it simple for now
@@ -115,12 +109,21 @@ export interface ProviderProps {
    * @default - A default role will be created.
    */
   readonly role?: iam.IRole;
+
+  /**
+   * Provider Lambda name.
+   *
+   * The provider lambda function name.
+   *
+   * @default -  CloudFormation default name from unique physical ID
+   */
+  readonly providerFunctionName?: string;
 }
 
 /**
  * Defines an AWS CloudFormation custom resource provider.
  */
-export class Provider extends CoreConstruct implements ICustomResourceProvider {
+export class Provider extends Construct implements ICustomResourceProvider {
 
   /**
    * The user-defined AWS Lambda function which is invoked for all resource
@@ -165,7 +168,7 @@ export class Provider extends CoreConstruct implements ICustomResourceProvider {
 
     this.role = props.role;
 
-    const onEventFunction = this.createFunction(consts.FRAMEWORK_ON_EVENT_HANDLER_NAME);
+    const onEventFunction = this.createFunction(consts.FRAMEWORK_ON_EVENT_HANDLER_NAME, props.providerFunctionName);
 
     if (this.isCompleteHandler) {
       const isCompleteFunction = this.createFunction(consts.FRAMEWORK_IS_COMPLETE_HANDLER_NAME);
@@ -192,17 +195,19 @@ export class Provider extends CoreConstruct implements ICustomResourceProvider {
    * Called by `CustomResource` which uses this provider.
    * @deprecated use `provider.serviceToken` instead
    */
-  public bind(_scope: CoreConstruct): CustomResourceProviderConfig {
+  public bind(_scope: Construct): CustomResourceProviderConfig {
     return {
       serviceToken: this.entrypoint.functionArn,
     };
   }
 
-  private createFunction(entrypoint: string) {
+  private createFunction(entrypoint: string, name?: string) {
     const fn = new lambda.Function(this, `framework-${entrypoint}`, {
-      code: lambda.Code.fromAsset(RUNTIME_HANDLER_PATH),
+      code: lambda.Code.fromAsset(RUNTIME_HANDLER_PATH, {
+        exclude: ['*.ts'],
+      }),
       description: `AWS CDK resource provider framework - ${entrypoint} (${this.node.path})`.slice(0, 256),
-      runtime: lambda.Runtime.NODEJS_12_X,
+      runtime: lambda.Runtime.NODEJS_14_X,
       handler: `framework.${entrypoint}`,
       timeout: FRAMEWORK_HANDLER_TIMEOUT,
       logRetention: this.logRetention,
@@ -210,6 +215,7 @@ export class Provider extends CoreConstruct implements ICustomResourceProvider {
       vpcSubnets: this.vpcSubnets,
       securityGroups: this.securityGroups,
       role: this.role,
+      functionName: name,
     });
 
     fn.addEnvironment(consts.USER_ON_EVENT_FUNCTION_ARN_ENV, this.onEventHandler.functionArn);

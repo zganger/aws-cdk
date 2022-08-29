@@ -2,14 +2,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as lambda from '@aws-cdk/aws-lambda';
 import { Architecture } from '@aws-cdk/aws-lambda';
+import { Construct } from 'constructs';
 import { Bundling } from './bundling';
-import { PackageManager } from './package-manager';
+import { LockFile } from './package-manager';
 import { BundlingOptions } from './types';
-import { callsites, findUp } from './util';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct } from '@aws-cdk/core';
+import { callsites, findUpMultiple } from './util';
 
 /**
  * Properties for a NodejsFunction
@@ -137,15 +134,20 @@ function findLockFile(depsLockFilePath?: string): string {
     return path.resolve(depsLockFilePath);
   }
 
-  const lockFile = findUp(PackageManager.PNPM.lockFile)
-    ?? findUp(PackageManager.YARN.lockFile)
-    ?? findUp(PackageManager.NPM.lockFile);
+  const lockFiles = findUpMultiple([
+    LockFile.PNPM,
+    LockFile.YARN,
+    LockFile.NPM,
+  ]);
 
-  if (!lockFile) {
-    throw new Error('Cannot find a package lock file (`pnpm-lock.yaml`, `yarn.lock` or `package-lock.json`). Please specify it with `depsFileLockPath`.');
+  if (lockFiles.length === 0) {
+    throw new Error('Cannot find a package lock file (`pnpm-lock.yaml`, `yarn.lock` or `package-lock.json`). Please specify it with `depsLockFilePath`.');
+  }
+  if (lockFiles.length > 1) {
+    throw new Error(`Multiple package lock files found: ${lockFiles.join(', ')}. Please specify the desired one with \`depsLockFilePath\`.`);
   }
 
-  return lockFile;
+  return lockFiles[0];
 }
 
 /**
@@ -153,10 +155,11 @@ function findLockFile(depsLockFilePath?: string): string {
  * 1. Given entry file
  * 2. A .ts file named as the defining file with id as suffix (defining-file.id.ts)
  * 3. A .js file name as the defining file with id as suffix (defining-file.id.js)
+ * 4. A .mjs file name as the defining file with id as suffix (defining-file.id.mjs)
  */
 function findEntry(id: string, entry?: string): string {
   if (entry) {
-    if (!/\.(jsx?|tsx?)$/.test(entry)) {
+    if (!/\.(jsx?|tsx?|mjs)$/.test(entry)) {
       throw new Error('Only JavaScript or TypeScript entry files are supported.');
     }
     if (!fs.existsSync(entry)) {
@@ -178,7 +181,12 @@ function findEntry(id: string, entry?: string): string {
     return jsHandlerFile;
   }
 
-  throw new Error(`Cannot find handler file ${tsHandlerFile} or ${jsHandlerFile}`);
+  const mjsHandlerFile = definingFile.replace(new RegExp(`${extname}$`), `.${id}.mjs`);
+  if (fs.existsSync(mjsHandlerFile)) {
+    return mjsHandlerFile;
+  }
+
+  throw new Error(`Cannot find handler file ${tsHandlerFile}, ${jsHandlerFile} or ${mjsHandlerFile}`);
 }
 
 /**

@@ -1,4 +1,4 @@
-import { Lazy, Stack, Token } from '@aws-cdk/core';
+import { ArnFormat, Lazy, Stack, Token, Annotations } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { IAlarmAction } from './alarm-action';
 import { AlarmBase, IAlarm } from './alarm-base';
@@ -114,7 +114,7 @@ export class Alarm extends AlarmBase {
   public static fromAlarmArn(scope: Construct, id: string, alarmArn: string): IAlarm {
     class Import extends AlarmBase implements IAlarm {
       public readonly alarmArn = alarmArn;
-      public readonly alarmName = Stack.of(scope).parseArn(alarmArn, ':').resourceName!;
+      public readonly alarmName = Stack.of(scope).splitArn(alarmArn, ArnFormat.COLON_RESOURCE_NAME).resourceName!;
     }
     return new Import(scope, id);
   }
@@ -192,7 +192,7 @@ export class Alarm extends AlarmBase {
       service: 'cloudwatch',
       resource: 'alarm',
       resourceName: this.physicalName,
-      sep: ':',
+      arnFormat: ArnFormat.COLON_RESOURCE_NAME,
     });
     this.alarmName = this.getResourceNameAttribute(alarm.ref);
 
@@ -203,6 +203,10 @@ export class Alarm extends AlarmBase {
       label: `${this.metric} ${OPERATOR_SYMBOLS[comparisonOperator]} ${props.threshold} for ${datapoints} datapoints within ${describePeriod(props.evaluationPeriods * metricPeriod(props.metric).toSeconds())}`,
       value: props.threshold,
     };
+
+    for (const w of this.metric.warnings ?? []) {
+      Annotations.of(this).addWarning(w);
+    }
   }
 
   /**
@@ -241,7 +245,7 @@ export class Alarm extends AlarmBase {
   }
 
   private validateActionArn(actionArn: string): string {
-    const ec2ActionsRegexp: RegExp = /arn:aws:automate:[a-z|\d|-]+:ec2:[a-z]+/;
+    const ec2ActionsRegexp: RegExp = /arn:aws[a-z0-9-]*:automate:[a-z|\d|-]+:ec2:[a-z]+/;
     if (ec2ActionsRegexp.test(actionArn)) {
       // Check per-instance metric
       const metricConfig = this.metric.toMetricConfig();
@@ -381,19 +385,10 @@ export class Alarm extends AlarmBase {
       return false;
     }
 
-    // if this is a region-agnostic stack, we can't assume anything about stat.account
-    // and therefore we assume its a cross-account call
-    if (Token.isUnresolved(stackAccount)) {
-      return true;
-    }
-
-    // ok, we can compare the two concrete values directly - if they are the same we
-    // can omit the account ID from the metric.
-    if (stackAccount === stat.account) {
-      return false;
-    }
-
-    return true;
+    // Return true if they're different. The ACCOUNT_ID token is interned
+    // so will always have the same string value (and even if we guess wrong
+    // it will still work).
+    return stackAccount !== stat.account;
   }
 }
 

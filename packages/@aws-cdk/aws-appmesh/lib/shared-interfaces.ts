@@ -1,12 +1,9 @@
 import * as cdk from '@aws-cdk/core';
+import { Construct } from 'constructs';
 import { CfnVirtualGateway, CfnVirtualNode } from './appmesh.generated';
 import { renderTlsClientPolicy } from './private/utils';
 import { TlsClientPolicy } from './tls-client-policy';
 import { IVirtualService } from './virtual-service';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct } from '@aws-cdk/core';
 
 /**
  * Represents timeouts for HTTP protocols.
@@ -238,7 +235,14 @@ class VirtualServiceBackend extends Backend {
     return {
       virtualServiceBackend: {
         virtualService: {
-          virtualServiceName: this.virtualService.virtualServiceName,
+          /**
+           * We want to use the name of the Virtual Service here directly instead of
+           * a `{ 'Fn::GetAtt' }` CFN expression. This avoids a circular dependency in
+           * the case where this Virtual Node is the Virtual Service's provider.
+           */
+          virtualServiceName: cdk.Token.isUnresolved(this.virtualService.virtualServiceName)
+            ? (this.virtualService as any).physicalName
+            : this.virtualService.virtualServiceName,
           clientPolicy: this.tlsClientPolicy
             ? {
               tls: renderTlsClientPolicy(scope, this.tlsClientPolicy),

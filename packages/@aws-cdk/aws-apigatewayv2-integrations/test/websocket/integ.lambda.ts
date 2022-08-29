@@ -1,7 +1,7 @@
 import { WebSocketApi, WebSocketStage } from '@aws-cdk/aws-apigatewayv2';
 import * as lambda from '@aws-cdk/aws-lambda';
 import { App, CfnOutput, Stack } from '@aws-cdk/core';
-import { LambdaWebSocketIntegration } from '../../lib';
+import { WebSocketLambdaIntegration } from '../../lib';
 
 /*
  * Stack verification steps:
@@ -15,33 +15,33 @@ const app = new App();
 const stack = new Stack(app, 'WebSocketApiInteg');
 
 const connectHandler = new lambda.Function(stack, 'ConnectHandler', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: new lambda.InlineCode('exports.handler = async function(event, context) { console.log(event); return { statusCode: 200, body: "connected" }; };'),
 });
 
 const disconnetHandler = new lambda.Function(stack, 'DisconnectHandler', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: new lambda.InlineCode('exports.handler = async function(event, context) { console.log(event); return { statusCode: 200, body: "disconnected" }; };'),
 });
 
 const defaultHandler = new lambda.Function(stack, 'DefaultHandler', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: new lambda.InlineCode('exports.handler = async function(event, context) { console.log(event); return { statusCode: 200, body: "default" }; };'),
 });
 
 const messageHandler = new lambda.Function(stack, 'MessageHandler', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: new lambda.InlineCode('exports.handler = async function(event, context) { console.log(event); return { statusCode: 200, body: "received" }; };'),
 });
 
 const webSocketApi = new WebSocketApi(stack, 'mywsapi', {
-  connectRouteOptions: { integration: new LambdaWebSocketIntegration({ handler: connectHandler }) },
-  disconnectRouteOptions: { integration: new LambdaWebSocketIntegration({ handler: disconnetHandler }) },
-  defaultRouteOptions: { integration: new LambdaWebSocketIntegration({ handler: defaultHandler }) },
+  connectRouteOptions: { integration: new WebSocketLambdaIntegration('ConnectIntegration', connectHandler) },
+  disconnectRouteOptions: { integration: new WebSocketLambdaIntegration('DisconnectIntegration', disconnetHandler) },
+  defaultRouteOptions: { integration: new WebSocketLambdaIntegration('DefaultIntegration', defaultHandler) },
 });
 const stage = new WebSocketStage(stack, 'mystage', {
   webSocketApi,
@@ -49,6 +49,6 @@ const stage = new WebSocketStage(stack, 'mystage', {
   autoDeploy: true,
 });
 
-webSocketApi.addRoute('sendmessage', { integration: new LambdaWebSocketIntegration({ handler: messageHandler }) });
+webSocketApi.addRoute('sendmessage', { integration: new WebSocketLambdaIntegration('SendMessageIntegration', messageHandler) });
 
 new CfnOutput(stack, 'ApiEndpoint', { value: stage.url });

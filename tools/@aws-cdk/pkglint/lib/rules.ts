@@ -1,10 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { Bundle } from '@aws-cdk/node-bundle';
 import * as caseUtils from 'case';
 import * as glob from 'glob';
 import * as semver from 'semver';
 import { LICENSE, NOTICE } from './licensing';
 import { PackageJson, ValidationRule } from './packagejson';
+import { cfnOnlyReadmeContents } from './readme-contents';
 import {
   deepGet, deepSet,
   expectDevDependency, expectJSON,
@@ -53,16 +55,25 @@ export class DescriptionIsRequired extends ValidationRule {
 export class PublishConfigTagIsRequired extends ValidationRule {
   public readonly name = 'package-info/publish-config-tag';
 
+  // The list of packages that are publicly published in both v1 and v2.
+  private readonly SHARED_PACKAGES = [
+    '@aws-cdk/assert',
+    '@aws-cdk/cloud-assembly-schema',
+    '@aws-cdk/cloudformation-diff',
+    '@aws-cdk/cx-api',
+    '@aws-cdk/region-info',
+    'aws-cdk',
+    'awslint',
+    'cdk-assets',
+  ];
+
   public validate(pkg: PackageJson): void {
     if (pkg.json.private) { return; }
 
-    // While v2 is still under development, we publish all v2 packages with the 'next'
-    // distribution tag, while still tagging all v1 packages as 'latest'.
-    // There are two sets of exceptions:
-    // 'aws-cdk-lib' (new v2 package) and all of the '*-alpha' modules, since they are also new packages for v2.
-    const newV2Packages = ['aws-cdk-lib'];
-    const isNewPackageForV2 = newV2Packages.includes(pkg.json.name) || pkg.packageName.endsWith('-alpha');
-    const defaultPublishTag = (cdkMajorVersion() === 2 && !isNewPackageForV2) ? 'next' : 'latest';
+    // v1 packages that are v1-only (e.g., `@aws-cdk/aws-s3`) are always published as `latest`.
+    // Packages that are published with the same namespace to both v1 and v2 are published as `latest-1` on v1 and `latest` on v2.
+    // All v2-only packages are just `latest`.
+    const defaultPublishTag = (cdkMajorVersion() === 2 || !this.SHARED_PACKAGES.includes(pkg.packageName)) ? 'latest' : 'latest-1';
 
     if (pkg.json.publishConfig?.tag !== defaultPublishTag) {
       pkg.report({
@@ -119,7 +130,9 @@ export class RepositoryCorrect extends ValidationRule {
     expectJSON(this.name, pkg, 'repository.type', 'git');
     expectJSON(this.name, pkg, 'repository.url', 'https://github.com/aws/aws-cdk.git');
     const pkgDir = path.relative(monoRepoRoot(), pkg.packageRoot);
-    expectJSON(this.name, pkg, 'repository.directory', pkgDir);
+    // Enforcing '/' separator for builds to work in Windows.
+    const osPkgDir = pkgDir.split(path.sep).join('/');
+    expectJSON(this.name, pkg, 'repository.directory', osPkgDir);
   }
 }
 
@@ -174,6 +187,7 @@ export class ThirdPartyAttributions extends ValidationRule {
   public readonly name = 'license/3p-attributions';
 
   public validate(pkg: PackageJson): void {
+
     const alwaysCheck = ['monocdk', 'aws-cdk-lib'];
     if (pkg.json.private && !alwaysCheck.includes(pkg.json.name)) {
       return;
@@ -203,6 +217,35 @@ export class ThirdPartyAttributions extends ValidationRule {
           ruleName: this.name,
         });
       }
+    }
+  }
+}
+
+export class NodeBundleValidation extends ValidationRule {
+  public readonly name = '@aws-cdk/node-bundle';
+
+  public validate(pkg: PackageJson): void {
+    const bundleConfig = pkg.json['cdk-package']?.bundle;
+    if (bundleConfig == null) {
+      return;
+    }
+
+    const bundle = new Bundle({
+      ...bundleConfig,
+      packageDir: pkg.packageRoot,
+    });
+
+    const result = bundle.validate({ fix: false });
+    if (result.success) {
+      return;
+    }
+
+    for (const violation of result.violations) {
+      pkg.report({
+        fix: violation.fix,
+        message: violation.message,
+        ruleName: `${this.name} => ${violation.type}`,
+      });
     }
   }
 }
@@ -238,6 +281,27 @@ export class ReadmeFile extends ValidationRule {
     }
     const scope: string = typeof scopes === 'string' ? scopes : scopes[0];
     const serviceName = AWS_SERVICE_NAMES[scope];
+
+    // If this is a 'cfn-only' package, we fix the README to specific file contents, and
+    // don't do any other checks.
+    if (pkg.json.maturity === 'cfn-only') {
+      fileShouldBe(this.name, pkg, 'README.md', cfnOnlyReadmeContents({
+        cfnNamespace: scope,
+        packageName: pkg.packageName,
+      }));
+      return;
+    }
+
+    // Otherwise, the cfn-specific disclaimer in it MUST NOT exist.
+    const disclaimerRegex = beginEndRegex('CFNONLY DISCLAIMER');
+    const currentReadme = readIfExists(readmeFile);
+    if (currentReadme && disclaimerRegex.test(currentReadme)) {
+      pkg.report({
+        ruleName: this.name,
+        message: 'README must not include CFNONLY DISCLAIMER section',
+        fix: () => fs.writeFileSync(readmeFile, currentReadme.replace(disclaimerRegex, '')),
+      });
+    }
 
     const headline = serviceName && `${serviceName} Construct Library`;
 
@@ -346,6 +410,12 @@ export class MaturitySetting extends ValidationRule {
   }
 
   private validateReadmeHasBanner(pkg: PackageJson, maturity: string, levelsPresent: string[]) {
+    if (pkg.packageName === '@aws-cdk/aws-elasticsearch') {
+      // Special case for elasticsearch, which is labeled as stable in package.json
+      // but all APIs are now marked 'deprecated'
+      return;
+    }
+
     const badge = this.readmeBadge(maturity, levelsPresent);
     if (!badge) {
       // Somehow, we don't have a badge for this stability level
@@ -629,7 +699,7 @@ export class NoPeerDependenciesMonocdk extends ValidationRule {
  */
 export class ConstructsVersion extends ValidationRule {
   public static readonly VERSION = cdkMajorVersion() === 2
-    ? '10.0.0-pre.5'
+    ? '^10.0.0'
     : '^3.3.69';
 
   public readonly name = 'deps/constructs';
@@ -691,11 +761,11 @@ export class JSIIPythonTarget extends ValidationRule {
 
     const moduleName = cdkModuleName(pkg.json.name);
 
-    // See: https://github.com/aws/jsii/blob/master/docs/configuration.md#configuring-python
+    // See: https://aws.github.io/jsii/user-guides/lib-author/configuration/targets/python/
 
     expectJSON(this.name, pkg, 'jsii.targets.python.distName', moduleName.python.distName);
     expectJSON(this.name, pkg, 'jsii.targets.python.module', moduleName.python.module);
-    expectJSON(this.name, pkg, 'jsii.targets.python.classifiers', ['Framework :: AWS CDK', 'Framework :: AWS CDK :: 1']);
+    expectJSON(this.name, pkg, 'jsii.targets.python.classifiers', ['Framework :: AWS CDK', `Framework :: AWS CDK :: ${cdkMajorVersion()}`]);
   }
 }
 
@@ -809,11 +879,11 @@ export class NodeCompatibility extends ValidationRule {
 
   public validate(pkg: PackageJson): void {
     const atTypesNode = pkg.getDevDependency('@types/node');
-    if (atTypesNode && !atTypesNode.startsWith('^10.')) {
+    if (atTypesNode && !atTypesNode.startsWith('^14.')) {
       pkg.report({
         ruleName: this.name,
-        message: `packages must support node version 10 and up, but ${atTypesNode} is declared`,
-        fix: () => pkg.addDevDependency('@types/node', '^10.17.5'),
+        message: `packages must support node version 14 and up, but ${atTypesNode} is declared`,
+        fix: () => pkg.addDevDependency('@types/node', '^14.18.22'),
       });
     }
   }
@@ -905,7 +975,7 @@ export class JSIIDotNetIconUrlIsRequired extends ValidationRule {
   public validate(pkg: PackageJson): void {
     if (!isJSII(pkg)) { return; }
 
-    const CDK_LOGO_URL = 'https://raw.githubusercontent.com/aws/aws-cdk/master/logo/default-256-dark.png';
+    const CDK_LOGO_URL = 'https://raw.githubusercontent.com/aws/aws-cdk/main/logo/default-256-dark.png';
     expectJSON(this.name, pkg, 'jsii.targets.dotnet.iconUrl', CDK_LOGO_URL);
   }
 }
@@ -1148,14 +1218,14 @@ export class MustHaveIntegCommand extends ValidationRule {
   public validate(pkg: PackageJson): void {
     if (!hasIntegTests(pkg)) { return; }
 
-    expectJSON(this.name, pkg, 'scripts.integ', 'cdk-integ');
+    expectJSON(this.name, pkg, 'scripts.integ', 'integ-runner');
 
     // We can't ACTUALLY require cdk-build-tools/package.json here,
     // because WE don't depend on cdk-build-tools and we don't know if
     // the package does.
     expectDevDependency(this.name,
       pkg,
-      '@aws-cdk/cdk-integ-tools',
+      '@aws-cdk/integ-runner',
       `${PKGLINT_VERSION}`); // eslint-disable-line @typescript-eslint/no-require-imports
   }
 }
@@ -1417,7 +1487,9 @@ export class ConstructsDependency extends ValidationRule {
   public validate(pkg: PackageJson) {
     const REQUIRED_VERSION = ConstructsVersion.VERSION;;
 
-    if (pkg.devDependencies?.constructs && pkg.devDependencies?.constructs !== REQUIRED_VERSION) {
+    // require a "constructs" dependency if there's a @aws-cdk/core dependency
+    const requiredDev = pkg.getDevDependency('@aws-cdk/core') && !pkg.getDevDependency('constructs');
+    if (requiredDev || (pkg.devDependencies?.constructs && pkg.devDependencies?.constructs !== REQUIRED_VERSION)) {
       pkg.report({
         ruleName: this.name,
         message: `"constructs" must have a version requirement ${REQUIRED_VERSION}`,
@@ -1427,7 +1499,8 @@ export class ConstructsDependency extends ValidationRule {
       });
     }
 
-    if (pkg.dependencies.constructs && pkg.dependencies.constructs !== REQUIRED_VERSION) {
+    const requiredDep = pkg.dependencies?.['@aws-cdk/core'] && !pkg.dependencies?.constructs;
+    if (requiredDep || (pkg.dependencies.constructs && pkg.dependencies.constructs !== REQUIRED_VERSION)) {
       pkg.report({
         ruleName: this.name,
         message: `"constructs" must have a version requirement ${REQUIRED_VERSION}`,
@@ -1585,7 +1658,8 @@ export class UbergenPackageVisibility extends ValidationRule {
 
   // The ONLY (non-alpha) packages that should be published for v2.
   // These include dependencies of the CDK CLI (aws-cdk).
-  private readonly publicPackages = [
+  private readonly v2PublicPackages = [
+    '@aws-cdk/assert',
     '@aws-cdk/cfnspec',
     '@aws-cdk/cloud-assembly-schema',
     '@aws-cdk/cloudformation-diff',
@@ -1596,12 +1670,13 @@ export class UbergenPackageVisibility extends ValidationRule {
     'awslint',
     'cdk',
     'cdk-assets',
+    '@aws-cdk/integ-runner',
   ];
 
   public validate(pkg: PackageJson): void {
     if (cdkMajorVersion() === 2) {
       // Only alpha packages and packages in the publicPackages list should be "public". Everything else should be private.
-      if (this.publicPackages.includes(pkg.json.name) && pkg.json.private === true) {
+      if (this.v2PublicPackages.includes(pkg.json.name) && pkg.json.private === true) {
         pkg.report({
           ruleName: this.name,
           message: 'Package must be public',
@@ -1609,25 +1684,13 @@ export class UbergenPackageVisibility extends ValidationRule {
             delete pkg.json.private;
           },
         });
-      } else if (!this.publicPackages.includes(pkg.json.name) && pkg.json.private !== true && !pkg.packageName.endsWith('-alpha')) {
+      } else if (!this.v2PublicPackages.includes(pkg.json.name) && pkg.json.private !== true && !pkg.packageName.endsWith('-alpha')) {
         pkg.report({
           ruleName: this.name,
           message: 'Package must not be public',
           fix: () => {
             delete pkg.json.private;
             pkg.json.private = true;
-          },
-        });
-      }
-    } else {
-      if (pkg.json.private && !pkg.json.ubergen?.exclude) {
-        pkg.report({
-          ruleName: this.name,
-          message: 'ubergen.exclude must be configured for private packages',
-          fix: () => {
-            pkg.json.ubergen = {
-              exclude: true,
-            };
           },
         });
       }
@@ -1653,7 +1716,8 @@ export class NoExperimentalDependents extends ValidationRule {
     ['@aws-cdk/aws-apigatewayv2-authorizers', ['@aws-cdk/aws-apigatewayv2']],
     ['@aws-cdk/aws-events-targets', ['@aws-cdk/aws-kinesisfirehose']],
     ['@aws-cdk/aws-kinesisfirehose-destinations', ['@aws-cdk/aws-kinesisfirehose']],
-    ['@aws-cdk/aws-iot-actions', ['@aws-cdk/aws-iot', '@aws-cdk/aws-kinesisfirehose']],
+    ['@aws-cdk/aws-iot-actions', ['@aws-cdk/aws-iot', '@aws-cdk/aws-kinesisfirehose', '@aws-cdk/aws-iotevents']],
+    ['@aws-cdk/aws-iotevents-actions', ['@aws-cdk/aws-iotevents']],
   ]);
 
   private readonly excludedModules = ['@aws-cdk/cloudformation-include'];
@@ -1676,8 +1740,8 @@ export class NoExperimentalDependents extends ValidationRule {
       }
 
       // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const stability = require(`${dep}/package.json`).stability;
-      if (stability === 'experimental') {
+      const maturity = require(`${dep}/package.json`).maturity;
+      if (maturity === 'experimental') {
         if (this.excludedDependencies.get(pkg.packageName)?.includes(dep)) {
           return;
         }
@@ -1842,4 +1906,12 @@ function isIncludedInMonolith(pkg: PackageJson): boolean {
     return false;
   }
   return true;
+}
+
+function beginEndRegex(label: string) {
+  return new RegExp(`(<\!--BEGIN ${label}-->)([\s\S]+)(<\!--END ${label}-->)`, 'm');
+}
+
+function readIfExists(filename: string): string | undefined {
+  return fs.existsSync(filename) ? fs.readFileSync(filename, { encoding: 'utf8' }) : undefined;
 }

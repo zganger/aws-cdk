@@ -322,7 +322,11 @@ describe('Job', () => {
                     's3:GetBucket*',
                     's3:List*',
                     's3:DeleteObject*',
-                    's3:PutObject*',
+                    's3:PutObject',
+                    's3:PutObjectLegalHold',
+                    's3:PutObjectRetention',
+                    's3:PutObjectTagging',
+                    's3:PutObjectVersionTagging',
                     's3:Abort*',
                   ],
                   Effect: 'Allow',
@@ -407,7 +411,11 @@ describe('Job', () => {
                     's3:GetBucket*',
                     's3:List*',
                     's3:DeleteObject*',
-                    's3:PutObject*',
+                    's3:PutObject',
+                    's3:PutObjectLegalHold',
+                    's3:PutObjectRetention',
+                    's3:PutObjectTagging',
+                    's3:PutObjectVersionTagging',
                     's3:Abort*',
                   ],
                   Effect: 'Allow',
@@ -757,7 +765,7 @@ describe('Job', () => {
           testCase.invoke(job);
 
           expect(metric).toEqual(new cloudwatch.Metric({
-            dimensions: {
+            dimensionsMap: {
               RuleName: (job.node.findChild(testCase.ruleId) as events.Rule).ruleName,
             },
             metricName: 'TriggeredRules',
@@ -814,7 +822,7 @@ describe('Job', () => {
           metricName,
           statistic: 'Sum',
           namespace: 'Glue',
-          dimensions: {
+          dimensionsMap: {
             JobName: job.jobName,
             JobRunId: 'ALL',
             Type: 'count',
@@ -830,7 +838,7 @@ describe('Job', () => {
           metricName,
           statistic: 'Average',
           namespace: 'Glue',
-          dimensions: {
+          dimensionsMap: {
             JobName: job.jobName,
             JobRunId: 'ALL',
             Type: 'gauge',

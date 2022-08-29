@@ -1,6 +1,7 @@
-import { IRole, PolicyDocument, PolicyStatement, Role, ServicePrincipal } from '@aws-cdk/aws-iam';
+import { Grant, IGrantable, IRole, PolicyDocument, PolicyStatement, Role, ServicePrincipal } from '@aws-cdk/aws-iam';
+import { IKey } from '@aws-cdk/aws-kms';
 import * as lambda from '@aws-cdk/aws-lambda';
-import { Duration, IResource, Lazy, Names, RemovalPolicy, Resource, Stack, Token } from '@aws-cdk/core';
+import { ArnFormat, Duration, IResource, Lazy, Names, RemovalPolicy, Resource, Stack, Token } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { toASCII as punycodeEncode } from 'punycode/';
 import { CfnUserPool } from './cognito.generated';
@@ -59,6 +60,25 @@ export interface AutoVerifiedAttrs {
   /**
    * Whether the phone number of the user should be auto verified at sign up.
    * @default - true, if phone is turned on for `signIn`. false, otherwise.
+   */
+  readonly phone?: boolean;
+}
+
+/**
+ * Attributes that will be kept until the user verifies the changed attribute.
+ */
+export interface KeepOriginalAttrs {
+  /**
+   * Whether the email address of the user should remain the original value until the new email address is verified.
+   *
+   * @default - false
+   */
+  readonly email?: boolean;
+
+  /**
+   * Whether the phone number of the user should remain the original value until the new phone number is verified.
+   *
+   * @default - false
    */
   readonly phone?: boolean;
 }
@@ -139,6 +159,20 @@ export interface UserPoolTriggers {
   readonly verifyAuthChallengeResponse?: lambda.IFunction;
 
   /**
+   * Amazon Cognito invokes this trigger to send email notifications to users.
+   * @see https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-custom-email-sender.html
+   * @default - no trigger configured
+   */
+  readonly customEmailSender?: lambda.IFunction
+
+  /**
+   * Amazon Cognito invokes this trigger to send SMS notifications to users.
+   * @see https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-custom-sms-sender.html
+   * @default - no trigger configured
+   */
+  readonly customSmsSender?: lambda.IFunction
+
+  /**
    * Index signature
    */
   [trigger: string]: lambda.IFunction | undefined;
@@ -207,6 +241,18 @@ export class UserPoolOperation {
    * @see https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-verify-auth-challenge-response.html
    */
   public static readonly VERIFY_AUTH_CHALLENGE_RESPONSE = new UserPoolOperation('verifyAuthChallengeResponse');
+
+  /**
+   * Amazon Cognito invokes this trigger to send email notifications to users.
+   * @see https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-custom-email-sender.html
+   */
+  public static readonly CUSTOM_EMAIL_SENDER = new UserPoolOperation('customEmailSender');
+
+  /**
+   * Amazon Cognito invokes this trigger to send email notifications to users.
+   * @see https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-custom-sms-sender.html
+   */
+  public static readonly CUSTOM_SMS_SENDER = new UserPoolOperation('customSmsSender');
 
   /** A custom user pool operation */
   public static of(name: string): UserPoolOperation {
@@ -496,6 +542,14 @@ export interface UserPoolProps {
   readonly smsRoleExternalId?: string;
 
   /**
+   * The region to integrate with SNS to send SMS messages
+   *
+   * This property will do nothing if SMS configuration is not configured
+   * @default - The same region as the user pool, with a few exceptions - https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-sms-settings.html#user-pool-sms-settings-first-time
+   */
+  readonly snsRegion?: string;
+
+  /**
    * Setting this would explicitly enable or disable SMS role creation.
    * When left unspecified, CDK will determine based on other properties if a role is needed or not.
    * @default - CDK will determine based on other properties of the user pool if an SMS role should be created or not.
@@ -525,6 +579,14 @@ export interface UserPoolProps {
    * If absent, no attributes will be auto-verified.
    */
   readonly autoVerify?: AutoVerifiedAttrs;
+
+  /**
+   * Attributes which Cognito will look to handle changes to the value of your users' email address and phone number attributes.
+   * EMAIL and PHONE are the only available options.
+   *
+   * @default - Nothing is kept.
+   */
+  readonly keepOriginal?: KeepOriginalAttrs;
 
   /**
    * The set of attributes that are required for every user in the user pool.
@@ -558,8 +620,8 @@ export interface UserPoolProps {
   /**
    * Configure the MFA types that users can use in this user pool. Ignored if `mfa` is set to `OFF`.
    *
-   * @default - { sms: true, oneTimePassword: false }, if `mfa` is set to `OPTIONAL` or `REQUIRED`.
-   * { sms: false, oneTimePassword: false }, otherwise
+   * @default - { sms: true, otp: false }, if `mfa` is set to `OPTIONAL` or `REQUIRED`.
+   * { sms: false, otp: false }, otherwise
    */
   readonly mfaSecondFactor?: MfaSecondFactor;
 
@@ -616,6 +678,13 @@ export interface UserPoolProps {
    * @default - see defaults on each property of DeviceTracking.
    */
   readonly deviceTracking?: DeviceTracking;
+
+  /**
+   * This key will be used to encrypt temporary passwords and authorization codes that Amazon Cognito generates.
+   * @see https://docs.aws.amazon.com/cognito/latest/developerguide/user-pool-lambda-custom-sender-triggers.html
+   * @default - no key ID configured
+   */
+  readonly customSenderKmsKey?: IKey;
 }
 
 /**
@@ -661,6 +730,12 @@ export interface IUserPool extends IResource {
    * Register an identity provider with this user pool.
    */
   registerIdentityProvider(provider: IUserPoolIdentityProvider): void;
+
+  /**
+   * Adds an IAM policy statement associated with this user pool to an
+   * IAM principal's policy.
+   */
+  grant(grantee: IGrantable, ...actions: string[]): Grant;
 }
 
 abstract class UserPoolBase extends Resource implements IUserPool {
@@ -692,6 +767,15 @@ abstract class UserPoolBase extends Resource implements IUserPool {
   public registerIdentityProvider(provider: IUserPoolIdentityProvider) {
     this.identityProviders.push(provider);
   }
+
+  public grant(grantee: IGrantable, ...actions: string[]): Grant {
+    return Grant.addToPrincipal({
+      grantee,
+      actions,
+      resourceArns: [this.userPoolArn],
+      scope: this,
+    });
+  }
 }
 
 /**
@@ -715,7 +799,7 @@ export class UserPool extends UserPoolBase {
    * Import an existing user pool based on its ARN.
    */
   public static fromUserPoolArn(scope: Construct, id: string, userPoolArn: string): IUserPool {
-    const arnParts = Stack.of(scope).parseArn(userPoolArn);
+    const arnParts = Stack.of(scope).splitArn(userPoolArn, ArnFormat.SLASH_RESOURCE_NAME);
 
     if (!arnParts.resourceName) {
       throw new Error('invalid user pool ARN');
@@ -766,12 +850,37 @@ export class UserPool extends UserPoolBase {
 
     const signIn = this.signInConfiguration(props);
 
+    if (props.customSenderKmsKey) {
+      const kmsKey = props.customSenderKmsKey;
+      (this.triggers as any).kmsKeyId = kmsKey.keyArn;
+    }
+
     if (props.lambdaTriggers) {
       for (const t of Object.keys(props.lambdaTriggers)) {
-        const trigger = props.lambdaTriggers[t];
-        if (trigger !== undefined) {
-          this.addLambdaPermission(trigger as lambda.IFunction, t);
-          (this.triggers as any)[t] = (trigger as lambda.IFunction).functionArn;
+        let trigger: lambda.IFunction | undefined;
+        switch (t) {
+          case 'customSmsSender':
+          case 'customEmailSender':
+            if (!this.triggers.kmsKeyId) {
+              throw new Error('you must specify a KMS key if you are using customSmsSender or customEmailSender.');
+            }
+            trigger = props.lambdaTriggers[t];
+            const version = 'V1_0';
+            if (trigger !== undefined) {
+              this.addLambdaPermission(trigger as lambda.IFunction, t);
+              (this.triggers as any)[t] = {
+                lambdaArn: trigger.functionArn,
+                lambdaVersion: version,
+              };
+            }
+            break;
+          default:
+            trigger = props.lambdaTriggers[t] as lambda.IFunction | undefined;
+            if (trigger !== undefined) {
+              this.addLambdaPermission(trigger as lambda.IFunction, t);
+              (this.triggers as any)[t] = (trigger as lambda.IFunction).functionArn;
+            }
+            break;
         }
       }
     }
@@ -828,6 +937,7 @@ export class UserPool extends UserPoolBase {
       }),
       accountRecoverySetting: this.accountRecovery(props),
       deviceConfiguration: props.deviceTracking,
+      userAttributeUpdateSettings: this.configureUserAttributeChanges(props),
     });
     userPool.applyRemovalPolicy(props.removalPolicy);
 
@@ -848,14 +958,28 @@ export class UserPool extends UserPoolBase {
     }
 
     this.addLambdaPermission(fn, operation.operationName);
-    (this.triggers as any)[operation.operationName] = fn.functionArn;
+    switch (operation.operationName) {
+      case 'customEmailSender':
+      case 'customSmsSender':
+        if (!this.triggers.kmsKeyId) {
+          throw new Error('you must specify a KMS key if you are using customSmsSender or customEmailSender.');
+        }
+        (this.triggers as any)[operation.operationName] = {
+          lambdaArn: fn.functionArn,
+          lambdaVersion: 'V1_0',
+        };
+        break;
+      default:
+        (this.triggers as any)[operation.operationName] = fn.functionArn;
+    }
+
   }
 
   private addLambdaPermission(fn: lambda.IFunction, name: string): void {
     const capitalize = name.charAt(0).toUpperCase() + name.slice(1);
     fn.addPermission(`${capitalize}Cognito`, {
       principal: new ServicePrincipal('cognito-idp.amazonaws.com'),
-      sourceArn: this.userPoolArn,
+      sourceArn: Lazy.string({ produce: () => this.userPoolArn }),
     });
   }
 
@@ -959,6 +1083,7 @@ export class UserPool extends UserPoolBase {
       return {
         snsCallerArn: props.smsRole.roleArn,
         externalId: props.smsRoleExternalId,
+        snsRegion: props.snsRegion,
       };
     }
 
@@ -973,7 +1098,7 @@ export class UserPool extends UserPoolBase {
       return undefined;
     }
 
-    const smsRoleExternalId = Names.uniqueId(this).substr(0, 1223); // sts:ExternalId max length of 1224
+    const smsRoleExternalId = Names.uniqueId(this).slice(0, 1223); // sts:ExternalId max length of 1224
     const smsRole = props.smsRole ?? new Role(this, 'smsRole', {
       assumedBy: new ServicePrincipal('cognito-idp.amazonaws.com', {
         conditions: {
@@ -999,6 +1124,7 @@ export class UserPool extends UserPoolBase {
     return {
       externalId: smsRoleExternalId,
       snsCallerArn: smsRole.roleArn,
+      snsRegion: props.snsRegion,
     };
   }
 
@@ -1122,6 +1248,26 @@ export class UserPool extends UserPoolBase {
       default:
         throw new Error(`Unsupported AccountRecovery type - ${accountRecovery}`);
     }
+  }
+
+  private configureUserAttributeChanges(props: UserPoolProps): CfnUserPool.UserAttributeUpdateSettingsProperty | undefined {
+    if (!props.keepOriginal) {
+      return undefined;
+    }
+
+    const attributesRequireVerificationBeforeUpdate: string[] = [];
+
+    if (props.keepOriginal.email) {
+      attributesRequireVerificationBeforeUpdate.push(StandardAttributeNames.email);
+    }
+
+    if (props.keepOriginal.phone) {
+      attributesRequireVerificationBeforeUpdate.push(StandardAttributeNames.phoneNumber);
+    }
+
+    return {
+      attributesRequireVerificationBeforeUpdate,
+    };
   }
 }
 

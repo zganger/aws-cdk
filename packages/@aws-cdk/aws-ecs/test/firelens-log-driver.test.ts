@@ -1,4 +1,4 @@
-import '@aws-cdk/assert-internal/jest';
+import { Match, Template } from '@aws-cdk/assertions';
 import * as secretsmanager from '@aws-cdk/aws-secretsmanager';
 import * as ssm from '@aws-cdk/aws-ssm';
 import * as cdk from '@aws-cdk/core';
@@ -24,23 +24,21 @@ describe('firelens log driver', () => {
     });
 
     // THEN
-    expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+    Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: [
-        {
+        Match.objectLike({
           LogConfiguration: {
             LogDriver: 'awsfirelens',
           },
-        },
-        {
+        }),
+        Match.objectLike({
           Essential: true,
           FirelensConfiguration: {
             Type: 'fluentbit',
           },
-        },
+        }),
       ],
     });
-
-
   });
 
   test('create a firelens log driver with secret options', () => {
@@ -71,9 +69,9 @@ describe('firelens log driver', () => {
     });
 
     // THEN
-    expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+    Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: [
-        {
+        Match.objectLike({
           LogConfiguration: {
             LogDriver: 'awsfirelens',
             Options: {
@@ -116,19 +114,19 @@ describe('firelens log driver', () => {
               },
             ],
           },
-        },
-        {
+        }),
+        Match.objectLike({
           Essential: true,
           FirelensConfiguration: {
             Type: 'fluentbit',
           },
-        },
+        }),
       ],
     });
 
-    expect(stack).toHaveResourceLike('AWS::IAM::Policy', {
+    Template.fromStack(stack).hasResourceProperties('AWS::IAM::Policy', {
       PolicyDocument: {
-        Statement: [
+        Statement: Match.arrayWith([
           {
             Action: [
               'secretsmanager:GetSecretValue',
@@ -168,12 +166,10 @@ describe('firelens log driver', () => {
               ],
             },
           },
-        ],
+        ]),
         Version: '2012-10-17',
       },
     });
-
-
   });
 
   test('create a firelens log driver to route logs to CloudWatch Logs with Fluent Bit', () => {
@@ -193,9 +189,9 @@ describe('firelens log driver', () => {
     });
 
     // THEN
-    expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+    Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: [
-        {
+        Match.objectLike({
           LogConfiguration: {
             LogDriver: 'awsfirelens',
             Options: {
@@ -206,17 +202,15 @@ describe('firelens log driver', () => {
               log_stream_prefix: 'from-fluent-bit',
             },
           },
-        },
-        {
+        }),
+        Match.objectLike({
           Essential: true,
           FirelensConfiguration: {
             Type: 'fluentbit',
           },
-        },
+        }),
       ],
     });
-
-
   });
 
   test('create a firelens log driver to route logs to kinesis firehose Logs with Fluent Bit', () => {
@@ -234,9 +228,9 @@ describe('firelens log driver', () => {
     });
 
     // THEN
-    expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+    Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
       ContainerDefinitions: [
-        {
+        Match.objectLike({
           LogConfiguration: {
             LogDriver: 'awsfirelens',
             Options: {
@@ -245,17 +239,15 @@ describe('firelens log driver', () => {
               delivery_stream: 'my-stream',
             },
           },
-        },
-        {
+        }),
+        Match.objectLike({
           Essential: true,
           FirelensConfiguration: {
             Type: 'fluentbit',
           },
-        },
+        }),
       ],
     });
-
-
   });
 
   describe('Firelens Configuration', () => {
@@ -270,7 +262,7 @@ describe('firelens log driver', () => {
       });
 
       // THEN
-      expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+      Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
         ContainerDefinitions: [
           {
             Essential: true,
@@ -283,7 +275,6 @@ describe('firelens log driver', () => {
           },
         ],
       });
-
     });
 
     test('fluent-bit log router container with options', () => {
@@ -297,6 +288,7 @@ describe('firelens log driver', () => {
           options: {
             enableECSLogMetadata: false,
             configFileValue: 'arn:aws:s3:::mybucket/fluent.conf',
+            configFileType: ecs.FirelensConfigFileType.S3,
           },
         },
         logging: new ecs.AwsLogDriver({ streamPrefix: 'firelens' }),
@@ -304,9 +296,9 @@ describe('firelens log driver', () => {
       });
 
       // THEN
-      expect(stack2).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+      Template.fromStack(stack2).hasResourceProperties('AWS::ECS::TaskDefinition', {
         ContainerDefinitions: [
-          {
+          Match.objectLike({
             Essential: true,
             MemoryReservation: 50,
             Name: 'log_router',
@@ -318,11 +310,9 @@ describe('firelens log driver', () => {
                 'config-file-value': 'arn:aws:s3:::mybucket/fluent.conf',
               },
             },
-          },
+          }),
         ],
       });
-
-
     });
 
     test('fluent-bit log router with file config type', () => {
@@ -342,9 +332,9 @@ describe('firelens log driver', () => {
       });
 
       // THEN
-      expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+      Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
         ContainerDefinitions: [
-          {
+          Match.objectLike({
             Essential: true,
             MemoryReservation: 50,
             Name: 'log_router',
@@ -356,11 +346,41 @@ describe('firelens log driver', () => {
                 'config-file-value': '/my/working/dir/firelens/config',
               },
             },
-          },
+          }),
         ],
       });
+    });
 
+    test('firelens config options are fully optional', () => {
+      // GIVEN
+      td.addFirelensLogRouter('log_router', {
+        image: ecs.obtainDefaultFluentBitECRImage(td, undefined, '2.1.0'),
+        firelensConfig: {
+          type: ecs.FirelensLogRouterType.FLUENTBIT,
+          options: {
+            enableECSLogMetadata: false,
+          },
+        },
+        logging: new ecs.AwsLogDriver({ streamPrefix: 'firelens' }),
+        memoryReservationMiB: 50,
+      });
 
+      // THEN
+      Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
+        ContainerDefinitions: [
+          Match.objectLike({
+            Essential: true,
+            MemoryReservation: 50,
+            Name: 'log_router',
+            FirelensConfiguration: {
+              Type: 'fluentbit',
+              Options: {
+                'enable-ecs-log-metadata': 'false',
+              },
+            },
+          }),
+        ],
+      });
     });
   });
 });

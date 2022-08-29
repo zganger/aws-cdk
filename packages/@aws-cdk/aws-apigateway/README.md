@@ -22,6 +22,7 @@ running on AWS Lambda, or any web application.
 - [Defining APIs](#defining-apis)
   - [Breaking up Methods and Resources across Stacks](#breaking-up-methods-and-resources-across-stacks)
 - [AWS Lambda-backed APIs](#aws-lambda-backed-apis)
+- [AWS StepFunctions backed APIs](#aws-stepfunctions-backed-APIs)
 - [Integration Targets](#integration-targets)
 - [Usage Plan & API Keys](#usage-plan--api-keys)
 - [Working with models](#working-with-models)
@@ -104,6 +105,137 @@ item.addMethod('GET');   // GET /items/{item}
 // the default integration for methods is "handler", but one can
 // customize this behavior per method or even a sub path.
 item.addMethod('DELETE', new apigateway.HttpIntegration('http://amazon.com'));
+```
+
+Additionally, `integrationOptions` can be supplied to explicitly define
+options of the Lambda integration:
+
+```ts
+declare const backend: lambda.Function;
+
+const api = new apigateway.LambdaRestApi(this, 'myapi', {
+  handler: backend,
+  integrationOptions: {
+    allowTestInvoke: false,
+    timeout: Duration.seconds(1),
+  }
+})
+```
+
+## AWS StepFunctions backed APIs
+
+You can use Amazon API Gateway with AWS Step Functions as the backend integration, specifically Synchronous Express Workflows.
+
+The `StepFunctionsRestApi` only supports integration with Synchronous Express state machine. The `StepFunctionsRestApi` construct makes this easy by setting up input, output and error mapping.
+
+The construct sets up an API endpoint and maps the `ANY` HTTP method and any calls to the API endpoint starts an express workflow execution for the underlying state machine. 
+
+Invoking the endpoint with any HTTP method (`GET`, `POST`, `PUT`, `DELETE`, ...) in the example below will send the request to the state machine as a new execution. On success, an HTTP code `200` is returned with the execution output as the Response Body.
+
+If the execution fails, an HTTP `500` response is returned with the `error` and `cause` from the execution output as the Response Body. If the request is invalid (ex. bad execution input) HTTP code `400` is returned.
+
+The response from the invocation contains only the `output` field from the 
+[StartSyncExecution](https://docs.aws.amazon.com/step-functions/latest/apireference/API_StartSyncExecution.html#API_StartSyncExecution_ResponseSyntax) API.
+In case of failures, the fields `error` and `cause` are returned as part of the response.
+Other metadata such as billing details, AWS account ID and resource ARNs are not returned in the API response.
+
+By default, a `prod` stage is provisioned.
+
+In order to reduce the payload size sent to AWS Step Functions, `headers` are not forwarded to the Step Functions execution input. It is possible to choose whether `headers`,  `requestContext`, `path`, `querystring`, and `authorizer` are included or not. By default, `headers` are excluded in all requests.
+
+More details about AWS Step Functions payload limit can be found at https://docs.aws.amazon.com/step-functions/latest/dg/limits-overview.html#service-limits-task-executions.
+
+The following code defines a REST API that routes all requests to the specified AWS StepFunctions state machine:
+
+```ts
+const stateMachineDefinition = new stepfunctions.Pass(this, 'PassState');
+
+const stateMachine: stepfunctions.IStateMachine = new stepfunctions.StateMachine(this, 'StateMachine', {
+  definition: stateMachineDefinition,
+  stateMachineType: stepfunctions.StateMachineType.EXPRESS,
+});
+    
+new apigateway.StepFunctionsRestApi(this, 'StepFunctionsRestApi', {
+  deploy: true,
+  stateMachine: stateMachine,
+});
+```
+
+When the REST API endpoint configuration above is invoked using POST, as follows -
+
+```bash
+curl -X POST -d '{ "customerId": 1 }' https://example.com/
+```
+
+AWS Step Functions will receive the request body in its input as follows:
+
+```json
+{
+  "body": {
+    "customerId": 1 
+  },
+  "path": "/",
+  "querystring": {}
+}
+```
+
+When the endpoint is invoked at path '/users/5' using the HTTP GET method as below:
+
+```bash
+curl -X GET https://example.com/users/5?foo=bar
+```
+
+AWS Step Functions will receive the following execution input:
+
+```json
+{
+  "body": {},
+  "path": {
+     "users": "5"
+  },
+  "querystring": {
+    "foo": "bar"
+  }
+}
+```
+
+Additional information around the request such as the request context, authorizer context, and headers can be included as part of the input
+forwarded to the state machine. The following example enables headers to be included in the input but not query string.
+
+```ts fixture=stepfunctions
+new apigateway.StepFunctionsRestApi(this, 'StepFunctionsRestApi', {
+  stateMachine: machine,
+  headers: true,
+  path: false,
+  querystring: false,
+  authorizer: false,
+  requestContext: {
+    caller: true,
+    user: true,
+  },
+});
+```
+
+In such a case, when the endpoint is invoked as below:
+
+```bash
+curl -X GET https://example.com/
+```
+
+AWS Step Functions will receive the following execution input:
+
+```json
+{
+  "headers": {
+    "Accept": "...",
+    "CloudFront-Forwarded-Proto": "...",
+  },
+  "requestContext": {
+     "accountId": "...",
+     "apiKey": "...",
+  },
+  "body": {}
+}
 ```
 
 ### Breaking up Methods and Resources across Stacks
@@ -309,7 +441,7 @@ have to define your models and mappings for the request, response, and integrati
 
 ```ts
 const hello = new lambda.Function(this, 'hello', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'hello.handler',
   code: lambda.Code.fromAsset('lambda')
 });
@@ -710,18 +842,29 @@ API.
 The following example will configure API Gateway to emit logs and data traces to
 AWS CloudWatch for all API calls:
 
-> By default, an IAM role will be created and associated with API Gateway to
-allow it to write logs and metrics to AWS CloudWatch unless `cloudWatchRole` is
-set to `false`.
+> Note: whether or not this is enabled or disabled by default is controlled by the
+`@aws-cdk/aws-apigateway:disableCloudWatchRole` feature flag. When this feature flag
+is set to `false` the default behavior will set `cloudWatchRole=true`
+
+This is controlled via the `@aws-cdk/aws-apigateway:disableCloudWatchRole` feature flag and
+is disabled by default. When enabled (or `@aws-cdk/aws-apigateway:disableCloudWatchRole=false`),
+an IAM role will be created and associated with API Gateway to allow it to write logs and metrics to AWS CloudWatch.
 
 ```ts
 const api = new apigateway.RestApi(this, 'books', {
+  cloudWatchRole: true,
   deployOptions: {
     loggingLevel: apigateway.MethodLoggingLevel.INFO,
     dataTraceEnabled: true
   }
 })
 ```
+
+> Note: there can only be a single apigateway.CfnAccount per AWS environment
+so if you create multiple `RestApi`s with `cloudWatchRole=true` each new `RestApi`
+will overwrite the `CfnAccount`. It is recommended to set `cloudWatchRole=false`
+(the default behavior if `@aws-cdk/aws-apigateway:disableCloudWatchRole` is enabled)
+and only create a single CloudWatch role and account per environment.
 
 ### Deep dive: Invalidation of deployments
 
@@ -1173,13 +1316,19 @@ in your openApi file.
 ## Metrics
 
 The API Gateway service sends metrics around the performance of Rest APIs to Amazon CloudWatch.
-These metrics can be referred to using the metric APIs available on the `RestApi` construct.
-The APIs with the `metric` prefix can be used to get reference to specific metrics for this API. For example,
-the method below refers to the client side errors metric for this API.
+These metrics can be referred to using the metric APIs available on the `RestApi`, `Stage` and `Method` constructs.
+Note that detailed metrics must be enabled for a stage to use the `Method` metrics.
+Read more about [API Gateway metrics](https://docs.aws.amazon.com/apigateway/latest/developerguide/api-gateway-metrics-and-dimensions.html), including enabling detailed metrics.
+The APIs with the `metric` prefix can be used to get reference to specific metrics for this API. For example:
 
 ```ts
 const api = new apigateway.RestApi(this, 'my-api');
-const clientErrorMetric = api.metricClientError();
+const stage = api.deploymentStage;
+const method = api.root.addMethod('GET');
+
+const clientErrorApiMetric = api.metricClientError();
+const serverErrorStageMetric = stage.metricServerError();
+const latencyMethodMetric = method.metricLatency(stage);
 ```
 
 ## APIGateway v2

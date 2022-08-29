@@ -24,7 +24,7 @@ describe('delivery stream', () => {
     });
     mockS3Destination = {
       bind(scope: Construct, _options: firehose.DestinationBindOptions): firehose.DestinationConfig {
-        dependable = new class extends cdk.Construct {
+        dependable = new class extends Construct {
           constructor(depScope: Construct, id: string) {
             super(depScope, id);
             new cdk.CfnResource(this, 'Resource', { type: 'CDK::Dummy' });
@@ -371,7 +371,7 @@ describe('delivery stream', () => {
         region: stack.region,
         namespace: 'AWS/Firehose',
         metricName: 'IncomingBytes',
-        statistic: cloudwatch.Statistic.AVERAGE,
+        statistic: cloudwatch.Statistic.SUM,
         dimensions: {
           DeliveryStreamName: deliveryStream.deliveryStreamName,
         },
@@ -386,7 +386,7 @@ describe('delivery stream', () => {
         region: stack.region,
         namespace: 'AWS/Firehose',
         metricName: 'IncomingRecords',
-        statistic: cloudwatch.Statistic.AVERAGE,
+        statistic: cloudwatch.Statistic.SUM,
         dimensions: {
           DeliveryStreamName: deliveryStream.deliveryStreamName,
         },
@@ -401,7 +401,7 @@ describe('delivery stream', () => {
         region: stack.region,
         namespace: 'AWS/Firehose',
         metricName: 'BackupToS3.Bytes',
-        statistic: cloudwatch.Statistic.AVERAGE,
+        statistic: cloudwatch.Statistic.SUM,
         dimensions: {
           DeliveryStreamName: deliveryStream.deliveryStreamName,
         },
@@ -431,7 +431,7 @@ describe('delivery stream', () => {
         region: stack.region,
         namespace: 'AWS/Firehose',
         metricName: 'BackupToS3.Records',
-        statistic: cloudwatch.Statistic.AVERAGE,
+        statistic: cloudwatch.Statistic.SUM,
         dimensions: {
           DeliveryStreamName: deliveryStream.deliveryStreamName,
         },

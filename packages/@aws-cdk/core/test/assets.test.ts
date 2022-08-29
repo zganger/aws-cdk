@@ -1,14 +1,20 @@
 import * as cxschema from '@aws-cdk/cloud-assembly-schema';
-import { FileAssetPackaging, Stack } from '../lib';
+import * as cxapi from '@aws-cdk/cx-api';
+import { App, FileAssetPackaging, Stack } from '../lib';
 import { toCloudFormation } from './util';
 
 describe('assets', () => {
-  test('addFileAsset correctly sets metadata and creates S3 parameters', () => {
-    // GIVEN
-    const stack = new Stack();
+  let app: App;
+  let stack: Stack;
 
+  beforeEach(() => {
+    app = new App({ context: { [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false } });
+    stack = new Stack(app);
+  });
+
+  test('addFileAsset correctly sets metadata and creates S3 parameters', () => {
     // WHEN
-    stack.addFileAsset({
+    stack.synthesizer.addFileAsset({
       fileName: 'file-name',
       packaging: FileAssetPackaging.ZIP_DIRECTORY,
       sourceHash: 'source-hash',
@@ -43,16 +49,11 @@ describe('assets', () => {
         },
       },
     });
-
-
   });
 
   test('addFileAsset correctly sets object urls', () => {
-    // GIVEN
-    const stack = new Stack();
-
     // WHEN
-    const assetLocation = stack.addFileAsset({
+    const assetLocation = stack.synthesizer.addFileAsset({
       fileName: 'file-name',
       packaging: FileAssetPackaging.ZIP_DIRECTORY,
       sourceHash: 'source-hash',
@@ -66,19 +67,13 @@ describe('assets', () => {
       assetLocation.s3ObjectUrl.replace(expectedS3UrlPrefix, '')).toEqual(
       assetLocation.httpUrl.replace(expectedHttpUrlPrefix, ''),
     );
-
-
   });
 
   test('addDockerImageAsset correctly sets metadata', () => {
-    // GIVEN
-    const stack = new Stack();
-
     // WHEN
-    stack.addDockerImageAsset({
+    stack.synthesizer.addDockerImageAsset({
       sourceHash: 'source-hash',
       directoryName: 'directory-name',
-      repositoryName: 'repository-name',
     });
 
     // THEN
@@ -91,7 +86,6 @@ describe('assets', () => {
       expect(data.packaging).toEqual('container-image');
       expect(data.path).toEqual('directory-name');
       expect(data.sourceHash).toEqual('source-hash');
-      expect(data.repositoryName).toEqual('repository-name');
       expect(data.imageTag).toEqual('source-hash');
     }
 
@@ -100,11 +94,8 @@ describe('assets', () => {
   });
 
   test('addDockerImageAsset uses the default repository name', () => {
-    // GIVEN
-    const stack = new Stack();
-
     // WHEN
-    stack.addDockerImageAsset({
+    stack.synthesizer.addDockerImageAsset({
       sourceHash: 'source-hash',
       directoryName: 'directory-name',
     });
@@ -119,7 +110,6 @@ describe('assets', () => {
       expect(data.packaging).toEqual('container-image');
       expect(data.path).toEqual('directory-name');
       expect(data.sourceHash).toEqual('source-hash');
-      expect(data.repositoryName).toEqual('aws-cdk/assets');
       expect(data.imageTag).toEqual('source-hash');
     }
 
@@ -128,12 +118,10 @@ describe('assets', () => {
   });
 
   test('addDockerImageAsset supports overriding repository name through a context key as a workaround until we have API for that', () => {
-    // GIVEN
-    const stack = new Stack();
     stack.node.setContext('assets-ecr-repository-name', 'my-custom-repo-name');
 
     // WHEN
-    stack.addDockerImageAsset({
+    stack.synthesizer.addDockerImageAsset({
       sourceHash: 'source-hash',
       directoryName: 'directory-name',
     });

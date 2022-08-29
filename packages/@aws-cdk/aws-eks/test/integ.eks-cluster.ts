@@ -1,24 +1,24 @@
-/// !cdk-integ pragma:ignore-assets
+/// !cdk-integ pragma:disable-update-workflow
+import * as path from 'path';
 import * as ec2 from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
 import * as kms from '@aws-cdk/aws-kms';
-import { App, CfnOutput, Duration, Token, Fn } from '@aws-cdk/core';
+import { Asset } from '@aws-cdk/aws-s3-assets';
+import { App, CfnOutput, Duration, Token, Fn, Stack, StackProps } from '@aws-cdk/core';
 import * as cdk8s from 'cdk8s';
-import * as kplus from 'cdk8s-plus';
+import * as kplus from 'cdk8s-plus-21';
 import * as constructs from 'constructs';
 import * as eks from '../lib';
 import * as hello from './hello-k8s';
-import { Pinger } from './pinger/pinger';
-import { TestStack } from './util';
 
 
-class EksClusterStack extends TestStack {
+class EksClusterStack extends Stack {
 
   private cluster: eks.Cluster;
   private vpc: ec2.IVpc;
 
-  constructor(scope: App, id: string) {
-    super(scope, id);
+  constructor(scope: App, id: string, props?: StackProps) {
+    super(scope, id, props);
 
     // allow all account users to assume this role in order to admin the cluster
     const mastersRole = new iam.Role(this, 'AdminRole', {
@@ -37,6 +37,14 @@ class EksClusterStack extends TestStack {
       defaultCapacity: 2,
       version: eks.KubernetesVersion.V1_21,
       secretsEncryptionKey,
+      tags: {
+        foo: 'bar',
+      },
+      clusterLogging: [
+        eks.ClusterLoggingTypes.API,
+        eks.ClusterLoggingTypes.AUTHENTICATOR,
+        eks.ClusterLoggingTypes.SCHEDULER,
+      ],
     });
 
     this.assertFargateProfile();
@@ -49,13 +57,13 @@ class EksClusterStack extends TestStack {
 
     this.assertSpotCapacity();
 
-    this.assertInferenceInstances();
-
     this.assertNodeGroupX86();
 
     this.assertNodeGroupSpot();
 
     this.assertNodeGroupArm();
+
+    this.assertNodeGroupGraviton3();
 
     this.assertNodeGroupCustomAmi();
 
@@ -65,13 +73,15 @@ class EksClusterStack extends TestStack {
 
     this.assertSimpleHelmChart();
 
+    this.assertHelmChartAsset();
+
     this.assertSimpleCdk8sChart();
 
     this.assertCreateNamespace();
 
     this.assertServiceAccount();
 
-    this.assertServiceLoadBalancerAddress();
+    this.assertExtendedServiceAccount();
 
     new CfnOutput(this, 'ClusterEndpoint', { value: this.cluster.clusterEndpoint });
     new CfnOutput(this, 'ClusterArn', { value: this.cluster.clusterArn });
@@ -84,6 +94,18 @@ class EksClusterStack extends TestStack {
   private assertServiceAccount() {
     // add a service account connected to a IAM role
     this.cluster.addServiceAccount('MyServiceAccount');
+  }
+
+  private assertExtendedServiceAccount() {
+    // add a service account connected to a IAM role
+    this.cluster.addServiceAccount('MyExtendedServiceAccount', {
+      annotations: {
+        'eks.amazonaws.com/sts-regional-endpoints': 'false',
+      },
+      labels: {
+        'some-label': 'with-some-value',
+      },
+    });
   }
 
   private assertCreateNamespace() {
@@ -137,6 +159,17 @@ class EksClusterStack extends TestStack {
       repository: 'https://kubernetes.github.io/dashboard/',
     });
   }
+
+  private assertHelmChartAsset() {
+    // get helm chart from Asset
+    const chartAsset = new Asset(this, 'ChartAsset', {
+      path: path.join(__dirname, 'test-chart'),
+    });
+    this.cluster.addHelmChart('test-chart', {
+      chartAsset: chartAsset,
+    });
+  }
+
   private assertSimpleManifest() {
     // apply a kubernetes manifest
     this.cluster.addManifest('HelloApp', ...hello.resources);
@@ -213,11 +246,13 @@ class EksClusterStack extends TestStack {
       nodeRole: this.cluster.defaultCapacity ? this.cluster.defaultCapacity.role : undefined,
     });
   }
-  private assertInferenceInstances() {
-    // inference instances
-    this.cluster.addAutoScalingGroupCapacity('InferenceInstances', {
-      instanceType: new ec2.InstanceType('inf1.2xlarge'),
-      minCapacity: 1,
+  private assertNodeGroupGraviton3() {
+    // add a Graviton3 nodegroup
+    this.cluster.addNodegroupCapacity('extra-ng-arm3', {
+      instanceType: new ec2.InstanceType('c7g.large'),
+      minSize: 1,
+      // reusing the default capacity nodegroup instance role when available
+      nodeRole: this.cluster.defaultCapacity ? this.cluster.defaultCapacity.role : undefined,
     });
   }
   private assertSpotCapacity() {
@@ -267,71 +302,10 @@ class EksClusterStack extends TestStack {
 
   }
 
-  private assertServiceLoadBalancerAddress() {
-
-    const serviceName = 'webservice';
-    const labels = { app: 'simple-web' };
-    const containerPort = 80;
-    const servicePort = 9000;
-
-    const pingerSecurityGroup = new ec2.SecurityGroup(this, 'WebServiceSecurityGroup', {
-      vpc: this.vpc,
-    });
-
-    pingerSecurityGroup.addIngressRule(pingerSecurityGroup, ec2.Port.tcp(servicePort), `allow http ${servicePort} access from myself`);
-
-    this.cluster.addManifest('simple-web-pod', {
-      kind: 'Pod',
-      apiVersion: 'v1',
-      metadata: { name: 'webpod', labels: labels },
-      spec: {
-        containers: [{
-          name: 'simplewebcontainer',
-          image: 'nginx',
-          ports: [{ containerPort: containerPort }],
-        }],
-      },
-    });
-
-    this.cluster.addManifest('simple-web-service', {
-      kind: 'Service',
-      apiVersion: 'v1',
-      metadata: {
-        name: serviceName,
-        annotations: {
-          // this is furtile soil for cdk8s-plus! :)
-          'service.beta.kubernetes.io/aws-load-balancer-internal': 'true',
-          'service.beta.kubernetes.io/aws-load-balancer-extra-security-groups': pingerSecurityGroup.securityGroupId,
-        },
-      },
-      spec: {
-        type: 'LoadBalancer',
-        ports: [{ port: servicePort, targetPort: containerPort }],
-        selector: labels,
-      },
-    });
-
-    const loadBalancerAddress = this.cluster.getServiceLoadBalancerAddress(serviceName);
-
-    // create a resource that hits the load balancer to make sure
-    // everything is wired properly.
-    const pinger = new Pinger(this, 'ServicePinger', {
-      url: `http://${loadBalancerAddress}:${servicePort}`,
-      securityGroup: pingerSecurityGroup,
-      vpc: this.vpc,
-    });
-
-    // this should display a proper nginx response
-    // <title>Welcome to nginx!</title>...
-    new CfnOutput(this, 'Response', {
-      value: pinger.response,
-    });
-
-  }
 }
 
 // this test uses both the bottlerocket image and the inf1 instance, which are only supported in these
-// regions. see https://github.com/aws/aws-cdk/tree/master/packages/%40aws-cdk/aws-eks#bottlerocket
+// regions. see https://github.com/aws/aws-cdk/tree/main/packages/%40aws-cdk/aws-eks#bottlerocket
 // and https://aws.amazon.com/about-aws/whats-new/2019/12/introducing-amazon-ec2-inf1-instances-high-performance-and-the-lowest-cost-machine-learning-inference-in-the-cloud/
 const supportedRegions = [
   'us-east-1',
@@ -342,7 +316,9 @@ const app = new App();
 
 // since the EKS optimized AMI is hard-coded here based on the region,
 // we need to actually pass in a specific region.
-const stack = new EksClusterStack(app, 'aws-cdk-eks-cluster-test');
+const stack = new EksClusterStack(app, 'aws-cdk-eks-cluster-test', {
+  env: { region: 'us-east-1' },
+});
 
 if (process.env.CDK_INTEG_ACCOUNT !== '12345678') {
 

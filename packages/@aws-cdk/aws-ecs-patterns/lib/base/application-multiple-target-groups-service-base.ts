@@ -4,16 +4,19 @@ import {
   AwsLogDriver, BaseService, CloudMapOptions, Cluster, ContainerDefinition, ContainerImage, ICluster, LogDriver, PropagatedTagSource,
   Protocol, Secret,
 } from '@aws-cdk/aws-ecs';
-import { ApplicationListener, ApplicationLoadBalancer, ApplicationProtocol, ApplicationTargetGroup, SslPolicy } from '@aws-cdk/aws-elasticloadbalancingv2';
+import {
+  ApplicationListener,
+  ApplicationLoadBalancer,
+  ApplicationProtocol,
+  ApplicationTargetGroup, ListenerCertificate,
+  ListenerCondition,
+  SslPolicy,
+} from '@aws-cdk/aws-elasticloadbalancingv2';
 import { IRole } from '@aws-cdk/aws-iam';
 import { ARecord, IHostedZone, RecordTarget } from '@aws-cdk/aws-route53';
 import { LoadBalancerTarget } from '@aws-cdk/aws-route53-targets';
 import { CfnOutput, Duration, Stack } from '@aws-cdk/core';
 import { Construct } from 'constructs';
-
-// v2 - keep this import as a separate section to reduce merge conflict when forward merging with the v2 branch.
-// eslint-disable-next-line
-import { Construct as CoreConstruct } from '@aws-cdk/core';
 
 /**
  * The properties for the base ApplicationMultipleTargetGroupsEc2Service or ApplicationMultipleTargetGroupsFargateService service.
@@ -104,6 +107,13 @@ export interface ApplicationMultipleTargetGroupsServiceBaseProps {
    * @default - default portMapping registered as target group and attached to the first defined listener
    */
   readonly targetGroups?: ApplicationTargetProps[];
+
+  /**
+   * Whether ECS Exec should be enabled
+   *
+   * @default - false
+   */
+  readonly enableExecuteCommand?: boolean;
 }
 
 /**
@@ -294,6 +304,13 @@ export interface ApplicationLoadBalancerProps {
    * @default - No Route53 hosted domain zone.
    */
   readonly domainZone?: IHostedZone;
+
+  /**
+   * The load balancer idle timeout, in seconds
+   *
+   * @default - CloudFormation sets idle timeout to 60 seconds
+   */
+  readonly idleTimeout?: Duration;
 }
 
 /**
@@ -344,7 +361,8 @@ export interface ApplicationListenerProps {
 /**
  * The base class for ApplicationMultipleTargetGroupsEc2Service and ApplicationMultipleTargetGroupsFargateService classes.
  */
-export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreConstruct {
+export abstract class ApplicationMultipleTargetGroupsServiceBase extends Construct {
+
   /**
    * The desired number of instantiations of the task definition to keep running on the service.
    * @deprecated - Use `internalDesiredCount` instead.
@@ -360,11 +378,13 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreCon
 
   /**
    * The default Application Load Balancer for the service (first added load balancer).
+   * @deprecated - Use `loadBalancers` instead.
    */
   public readonly loadBalancer: ApplicationLoadBalancer;
 
   /**
-   * The default listener for the service (first added listener).
+    * The default listener for the service (first added listener).
+   * @deprecated - Use `listeners` instead.
    */
   public readonly listener: ApplicationListener;
 
@@ -374,10 +394,18 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreCon
   public readonly cluster: ICluster;
 
   protected logDriver?: LogDriver;
-  protected listeners = new Array<ApplicationListener>();
-  protected targetGroups = new Array<ApplicationTargetGroup>();
-
-  private loadBalancers = new Array<ApplicationLoadBalancer>();
+  /**
+    * The listeners of the service.
+    */
+  public readonly listeners = new Array<ApplicationListener>();
+  /**
+  * The target groups of the service.
+  */
+  public readonly targetGroups = new Array<ApplicationTargetGroup>();
+  /**
+  * The load balancers of the service.
+  */
+  public readonly loadBalancers = new Array<ApplicationLoadBalancer>();
 
   /**
    * Constructs a new instance of the ApplicationMultipleTargetGroupsServiceBase class.
@@ -397,8 +425,9 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreCon
     }
 
     if (props.loadBalancers) {
+      this.validateLbProps(props.loadBalancers);
       for (const lbProps of props.loadBalancers) {
-        const lb = this.createLoadBalancer(lbProps.name, lbProps.publicLoadBalancer);
+        const lb = this.createLoadBalancer(lbProps.name, lbProps.publicLoadBalancer, lbProps.idleTimeout);
         this.loadBalancers.push(lb);
         const protocolType = new Set<ApplicationProtocol>();
         for (const listenerProps of lbProps.listeners) {
@@ -469,6 +498,14 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreCon
 
   protected registerECSTargets(service: BaseService, container: ContainerDefinition, targets: ApplicationTargetProps[]): ApplicationTargetGroup {
     for (const targetProps of targets) {
+      const conditions: Array<ListenerCondition> = [];
+      if (targetProps.hostHeader) {
+        conditions.push(ListenerCondition.hostHeaders([targetProps.hostHeader]));
+      }
+      if (targetProps.pathPattern) {
+        conditions.push(ListenerCondition.pathPatterns([targetProps.pathPattern]));
+      }
+
       const targetGroup = this.findListener(targetProps.listener).addTargets(`ECSTargetGroup${container.containerName}${targetProps.containerPort}`, {
         port: 80,
         targets: [
@@ -478,8 +515,7 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreCon
             protocol: targetProps.protocol,
           }),
         ],
-        hostHeader: targetProps.hostHeader,
-        pathPattern: targetProps.pathPattern,
+        conditions,
         priority: targetProps.priority,
       });
       this.targetGroups.push(targetGroup);
@@ -519,7 +555,7 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreCon
       certificate = undefined;
     }
     if (certificate !== undefined) {
-      listener.addCertificateArns(`Arns${props.listenerName}`, [certificate.certificateArn]);
+      listener.addCertificates(`Arns${props.listenerName}`, [ListenerCertificate.fromArn(certificate.certificateArn)]);
     }
 
     return listener;
@@ -546,11 +582,23 @@ export abstract class ApplicationMultipleTargetGroupsServiceBase extends CoreCon
     }
   }
 
-  private createLoadBalancer(name: string, publicLoadBalancer?: boolean): ApplicationLoadBalancer {
+  private validateLbProps(props: ApplicationLoadBalancerProps[]) {
+    for (let prop of props) {
+      if (prop.idleTimeout) {
+        if (prop.idleTimeout > Duration.seconds(4000) || prop.idleTimeout < Duration.seconds(1)) {
+          throw new Error('Load balancer idle timeout must be between 1 and 4000 seconds.');
+        }
+      }
+    }
+
+  }
+
+  private createLoadBalancer(name: string, publicLoadBalancer?: boolean, idleTimeout?: Duration): ApplicationLoadBalancer {
     const internetFacing = publicLoadBalancer ?? true;
     const lbProps = {
       vpc: this.cluster.vpc,
       internetFacing,
+      idleTimeout: idleTimeout,
     };
 
     return new ApplicationLoadBalancer(this, name, lbProps);

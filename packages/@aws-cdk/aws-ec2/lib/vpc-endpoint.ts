@@ -260,8 +260,14 @@ export class InterfaceVpcEndpointService implements IInterfaceVpcEndpointService
 export class InterfaceVpcEndpointAwsService implements IInterfaceVpcEndpointService {
   public static readonly SAGEMAKER_NOTEBOOK = new InterfaceVpcEndpointAwsService('notebook', 'aws.sagemaker');
   public static readonly ATHENA = new InterfaceVpcEndpointAwsService('athena');
+  public static readonly APPLICATION_AUTOSCALING = new InterfaceVpcEndpointAwsService('application-autoscaling');
+  public static readonly AUTOSCALING = new InterfaceVpcEndpointAwsService('autoscaling');
+  public static readonly AUTOSCALING_PLANS = new InterfaceVpcEndpointAwsService('autoscaling-plans');
+  public static readonly BATCH = new InterfaceVpcEndpointAwsService('batch');
   public static readonly CLOUDFORMATION = new InterfaceVpcEndpointAwsService('cloudformation');
   public static readonly CLOUDTRAIL = new InterfaceVpcEndpointAwsService('cloudtrail');
+  public static readonly CODEARTIFACT_API = new InterfaceVpcEndpointAwsService('codeartifact.api');
+  public static readonly CODEARTIFACT_REPOSITORIES = new InterfaceVpcEndpointAwsService('codeartifact.repositories');
   public static readonly CODEBUILD = new InterfaceVpcEndpointAwsService('codebuild');
   public static readonly CODEBUILD_FIPS = new InterfaceVpcEndpointAwsService('codebuild-fips');
   public static readonly CODECOMMIT = new InterfaceVpcEndpointAwsService('codecommit');
@@ -294,6 +300,7 @@ export class InterfaceVpcEndpointAwsService implements IInterfaceVpcEndpointServ
   public static readonly CLOUDWATCH = new InterfaceVpcEndpointAwsService('monitoring');
   public static readonly RDS = new InterfaceVpcEndpointAwsService('rds');
   public static readonly RDS_DATA = new InterfaceVpcEndpointAwsService('rds-data');
+  public static readonly S3 = new InterfaceVpcEndpointAwsService('s3');
   public static readonly SAGEMAKER_API = new InterfaceVpcEndpointAwsService('sagemaker.api');
   public static readonly SAGEMAKER_RUNTIME = new InterfaceVpcEndpointAwsService('sagemaker.runtime');
   public static readonly SAGEMAKER_RUNTIME_FIPS = new InterfaceVpcEndpointAwsService('sagemaker.runtime-fips');
@@ -304,6 +311,8 @@ export class InterfaceVpcEndpointAwsService implements IInterfaceVpcEndpointServ
   public static readonly SSM = new InterfaceVpcEndpointAwsService('ssm');
   public static readonly SSM_MESSAGES = new InterfaceVpcEndpointAwsService('ssmmessages');
   public static readonly STS = new InterfaceVpcEndpointAwsService('sts');
+  public static readonly TEXTRACT = new InterfaceVpcEndpointAwsService('textract');
+  public static readonly TEXTRACT_FIPS = new InterfaceVpcEndpointAwsService('textract-fips');
   public static readonly TRANSFER = new InterfaceVpcEndpointAwsService('transfer.server');
   public static readonly STORAGE_GATEWAY = new InterfaceVpcEndpointAwsService('storagegateway');
   public static readonly REKOGNITION = new InterfaceVpcEndpointAwsService('rekognition');
@@ -314,9 +323,14 @@ export class InterfaceVpcEndpointAwsService implements IInterfaceVpcEndpointServ
   public static readonly XRAY = new InterfaceVpcEndpointAwsService('xray');
 
   /**
-   * The name of the service.
+   * The name of the service. e.g. com.amazonaws.us-east-1.ecs
    */
   public readonly name: string;
+
+  /**
+   * The short name of the service. e.g. ecs
+   */
+  public readonly shortName: string;
 
   /**
    * The port of the service.
@@ -346,6 +360,7 @@ export class InterfaceVpcEndpointAwsService implements IInterfaceVpcEndpointServ
     });
 
     this.name = `${prefix || defaultEndpointPrefix}.${region}.${name}${defaultEndpointSuffix}`;
+    this.shortName = name;
     this.port = port || 443;
   }
 
@@ -505,6 +520,18 @@ export class InterfaceVpcEndpoint extends VpcEndpoint implements IInterfaceVpcEn
 
   /**
    * The DNS entries for the interface VPC endpoint.
+   * Each entry is a combination of the hosted zone ID and the DNS name.
+   * The entries are ordered as follows: regional public DNS, zonal public DNS, private DNS, and wildcard DNS.
+   * This order is not enforced for AWS Marketplace services.
+   *
+   * The following is an example. In the first entry, the hosted zone ID is Z1HUB23UULQXV
+   * and the DNS name is vpce-01abc23456de78f9g-12abccd3.ec2.us-east-1.vpce.amazonaws.com.
+   *
+   * ["Z1HUB23UULQXV:vpce-01abc23456de78f9g-12abccd3.ec2.us-east-1.vpce.amazonaws.com",
+   * "Z1HUB23UULQXV:vpce-01abc23456de78f9g-12abccd3-us-east-1a.ec2.us-east-1.vpce.amazonaws.com",
+   * "Z1C12344VYDITB0:ec2.us-east-1.amazonaws.com"]
+   *
+   * If you update the PrivateDnsEnabled or SubnetIds properties, the DNS entries in the list will change.
    * @attribute
    */
   public readonly vpcEndpointDnsEntries: string[];
@@ -574,7 +601,7 @@ export class InterfaceVpcEndpoint extends VpcEndpoint implements IInterfaceVpcEn
     const subnets = subnetSelection.subnets;
 
     // Sanity check the subnet count
-    if (subnetSelection.subnets.length == 0) {
+    if (!subnetSelection.isPendingLookup && subnetSelection.subnets.length == 0) {
       throw new Error('Cannot create a VPC Endpoint with no subnets');
     }
 
@@ -612,8 +639,8 @@ export class InterfaceVpcEndpoint extends VpcEndpoint implements IInterfaceVpcEn
   private validateCanLookupSupportedAzs(subnets: ISubnet[], serviceName: string) {
 
     // Having any of these be true will cause the AZ lookup to fail at synthesis time
-    const agnosticAcct = Token.isUnresolved(this.stack.account);
-    const agnosticRegion = Token.isUnresolved(this.stack.region);
+    const agnosticAcct = Token.isUnresolved(this.env.account);
+    const agnosticRegion = Token.isUnresolved(this.env.region);
     const agnosticService = Token.isUnresolved(serviceName);
 
     // Having subnets with Token AZs can cause the endpoint to be created with no subnets, failing at deployment time
@@ -674,6 +701,8 @@ export interface InterfaceVpcEndpointAttributes {
   /**
    * The security groups associated with the interface VPC endpoint.
    *
+   * If you wish to manage the network connections associated with this endpoint,
+   * you will need to specify its security groups.
    */
   readonly securityGroups?: ISecurityGroup[];
 

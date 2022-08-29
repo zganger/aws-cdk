@@ -1,7 +1,8 @@
 import * as cloudwatch from '@aws-cdk/aws-cloudwatch';
 import { IVpcEndpoint } from '@aws-cdk/aws-ec2';
 import * as iam from '@aws-cdk/aws-iam';
-import { CfnOutput, IResource as IResourceBase, Resource, Stack } from '@aws-cdk/core';
+import { ArnFormat, CfnOutput, IResource as IResourceBase, Resource, Stack, Token, FeatureFlags, RemovalPolicy } from '@aws-cdk/core';
+import { APIGATEWAY_DISABLE_CLOUDWATCH_ROLE } from '@aws-cdk/cx-api';
 import { Construct } from 'constructs';
 import { ApiDefinition } from './api-definition';
 import { ApiKey, ApiKeyOptions, IApiKey } from './api-key';
@@ -27,6 +28,12 @@ export interface IRestApi extends IResourceBase {
    * @attribute
    */
   readonly restApiId: string;
+
+  /**
+   * The name of this API Gateway RestApi.
+   * @attribute
+   */
+  readonly restApiName: string;
 
   /**
    * The resource ID of the root resource.
@@ -152,7 +159,7 @@ export interface RestApiBaseProps {
   /**
    * Automatically configure an AWS CloudWatch role for API Gateway.
    *
-   * @default true
+   * @default - false if `@aws-cdk/aws-apigateway:disableCloudWatchRole` is enabled, true otherwise
    */
   readonly cloudWatchRole?: boolean;
 
@@ -180,6 +187,13 @@ export interface RestApiBaseProps {
    * @default false
    */
   readonly disableExecuteApiEndpoint?: boolean;
+
+  /**
+   * A description of the RestApi construct.
+   *
+   * @default - 'Automatically created by the RestApi construct'
+   */
+  readonly description?: string;
 }
 
 /**
@@ -193,12 +207,6 @@ export interface RestApiOptions extends RestApiBaseProps, ResourceOptions {
  * Props to create a new instance of RestApi
  */
 export interface RestApiProps extends RestApiOptions {
-  /**
-   * A description of the purpose of this API Gateway RestApi resource.
-   *
-   * @default - No description.
-   */
-  readonly description?: string;
 
   /**
    * The list of binary media mime-types that are supported by the RestApi
@@ -312,15 +320,21 @@ export abstract class RestApiBase extends Resource implements IRestApi {
 
   /**
    * A human friendly name for this Rest API. Note that this is different from `restApiId`.
+   * @attribute
    */
   public readonly restApiName: string;
 
   private _latestDeployment?: Deployment;
   private _domainName?: DomainName;
 
+  protected cloudWatchAccount?: CfnAccount;
+
   constructor(scope: Construct, id: string, props: RestApiBaseProps = { }) {
-    super(scope, id);
-    this.restApiName = props.restApiName ?? id;
+    const restApiName = props.restApiName ?? id;
+    super(scope, id, {
+      physicalName: restApiName,
+    });
+    this.restApiName = restApiName;
 
     Object.defineProperty(this, RESTAPI_SYMBOL, { value: true });
   }
@@ -362,7 +376,7 @@ export abstract class RestApiBase extends Resource implements IRestApi {
   }
 
   public arnForExecuteApi(method: string = '*', path: string = '/*', stage: string = '*') {
-    if (!path.startsWith('/')) {
+    if (!Token.isUnresolved(path) && !path.startsWith('/')) {
       throw new Error(`"path" must begin with a "/": '${path}'`);
     }
 
@@ -373,7 +387,7 @@ export abstract class RestApiBase extends Resource implements IRestApi {
     return Stack.of(this).formatArn({
       service: 'execute-api',
       resource: this.restApiId,
-      sep: '/',
+      arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
       resourceName: `${stage}/${method}${path}`,
     });
   }
@@ -405,7 +419,7 @@ export abstract class RestApiBase extends Resource implements IRestApi {
     return new cloudwatch.Metric({
       namespace: 'AWS/ApiGateway',
       metricName,
-      dimensions: { ApiName: this.restApiName },
+      dimensionsMap: { ApiName: this.restApiName },
       ...props,
     }).attachTo(this);
   }
@@ -500,6 +514,17 @@ export abstract class RestApiBase extends Resource implements IRestApi {
   }
 
   /**
+   * Associates a Stage with this REST API
+   *
+   * @internal
+   */
+  public _attachStage(stage: Stage) {
+    if (this.cloudWatchAccount) {
+      stage.node.addDependency(this.cloudWatchAccount);
+    }
+  }
+
+  /**
    * @internal
    */
   protected _configureCloudWatchRole(apiResource: CfnRestApi) {
@@ -507,12 +532,14 @@ export abstract class RestApiBase extends Resource implements IRestApi {
       assumedBy: new iam.ServicePrincipal('apigateway.amazonaws.com'),
       managedPolicies: [iam.ManagedPolicy.fromAwsManagedPolicyName('service-role/AmazonAPIGatewayPushToCloudWatchLogs')],
     });
+    role.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
-    const resource = new CfnAccount(this, 'Account', {
+    this.cloudWatchAccount = new CfnAccount(this, 'Account', {
       cloudWatchRoleArn: role.roleArn,
     });
+    this.cloudWatchAccount.applyRemovalPolicy(RemovalPolicy.RETAIN);
 
-    resource.node.addDependency(apiResource);
+    this.cloudWatchAccount.node.addDependency(apiResource);
   }
 
   /**
@@ -537,7 +564,7 @@ export abstract class RestApiBase extends Resource implements IRestApi {
     if (deploy) {
 
       this._latestDeployment = new Deployment(this, 'Deployment', {
-        description: 'Automatically created by the RestApi construct',
+        description: props.description? props.description :'Automatically created by the RestApi construct',
         api: this,
         retainDeployments: props.retainDeployments,
       });
@@ -639,7 +666,8 @@ export class SpecRestApi extends RestApiBase {
       this.addDomainName('CustomDomain', props.domainName);
     }
 
-    const cloudWatchRole = props.cloudWatchRole ?? true;
+    const cloudWatchRoleDefault = FeatureFlags.of(this).isEnabled(APIGATEWAY_DISABLE_CLOUDWATCH_ROLE) ? false : true;
+    const cloudWatchRole = props.cloudWatchRole ?? cloudWatchRoleDefault;
     if (cloudWatchRole) {
       this._configureCloudWatchRole(resource);
     }
@@ -654,6 +682,13 @@ export interface RestApiAttributes {
    * The ID of the API Gateway RestApi.
    */
   readonly restApiId: string;
+
+  /**
+   * The name of the API Gateway RestApi.
+   *
+   * @default - ID of the RestApi construct.
+   */
+  readonly restApiName?: string;
 
   /**
    * The resource ID of the root resource.
@@ -695,6 +730,7 @@ export class RestApi extends RestApiBase {
   public static fromRestApiAttributes(scope: Construct, id: string, attrs: RestApiAttributes): IRestApi {
     class Import extends RestApiBase {
       public readonly restApiId = attrs.restApiId;
+      public readonly restApiName = attrs.restApiName ?? id;
       public readonly restApiRootResourceId = attrs.rootResourceId;
       public readonly root: IResource = new RootResource(this, {}, this.restApiRootResourceId);
     }
@@ -722,7 +758,7 @@ export class RestApi extends RestApiBase {
     super(scope, id, props);
 
     const resource = new CfnRestApi(this, 'Resource', {
-      name: this.restApiName,
+      name: this.physicalName,
       description: props.description,
       policy: props.policy,
       failOnWarnings: props.failOnWarnings,
@@ -737,7 +773,8 @@ export class RestApi extends RestApiBase {
     this.node.defaultChild = resource;
     this.restApiId = resource.ref;
 
-    const cloudWatchRole = props.cloudWatchRole ?? true;
+    const cloudWatchRoleDefault = FeatureFlags.of(this).isEnabled(APIGATEWAY_DISABLE_CLOUDWATCH_ROLE) ? false : true;
+    const cloudWatchRole = props.cloudWatchRole ?? cloudWatchRoleDefault;
     if (cloudWatchRole) {
       this._configureCloudWatchRole(resource);
     }
@@ -749,6 +786,8 @@ export class RestApi extends RestApiBase {
 
     this.root = new RootResource(this, props, resource.attrRootResourceId);
     this.restApiRootResourceId = resource.attrRootResourceId;
+
+    this.node.addValidation({ validate: () => this.validateRestApi() });
   }
 
   /**
@@ -814,7 +853,7 @@ export class RestApi extends RestApiBase {
   /**
    * Performs validation of the REST API.
    */
-  protected validate() {
+  private validateRestApi() {
     if (this.methods.length === 0) {
       return ["The REST API doesn't contain any methods"];
     }

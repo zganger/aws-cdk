@@ -1,9 +1,11 @@
-import { Duration, IResource, Resource, Stack, Token } from '@aws-cdk/core';
+import * as cloudwatch from '@aws-cdk/aws-cloudwatch';
+import { ArnFormat, Duration, IResource, Resource, Stack, Token } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { AccessLogFormat, IAccessLogDestination } from './access-log';
+import { ApiGatewayMetrics } from './apigateway-canned-metrics.generated';
 import { CfnStage } from './apigateway.generated';
 import { Deployment } from './deployment';
-import { IRestApi } from './restapi';
+import { IRestApi, RestApiBase } from './restapi';
 import { parseMethodOptionsPath } from './util';
 
 /**
@@ -141,8 +143,10 @@ export interface MethodDeploymentOptions {
   readonly loggingLevel?: MethodLoggingLevel;
 
   /**
-   * Specifies whether data trace logging is enabled for this method, which
-   * effects the log entries pushed to Amazon CloudWatch Logs.
+   * Specifies whether data trace logging is enabled for this method.
+   * When enabled, API gateway will log the full API requests and responses.
+   * This can be useful to troubleshoot APIs, but can result in logging sensitive data.
+   * We recommend that you don't enable this feature for production APIs.
    *
    * @default false
    */
@@ -254,6 +258,10 @@ export class Stage extends Resource implements IStage {
 
     this.stageName = resource.ref;
     this.restApi = props.deployment.api;
+
+    if (RestApiBase._isRestApiBase(this.restApi)) {
+      this.restApi._attachStage(this);
+    }
   }
 
   /**
@@ -265,6 +273,26 @@ export class Stage extends Resource implements IStage {
       throw new Error(`Path must begin with "/": ${path}`);
     }
     return `https://${this.restApi.restApiId}.execute-api.${Stack.of(this).region}.${Stack.of(this).urlSuffix}/${this.stageName}${path}`;
+  }
+
+  /**
+   * Returns the resource ARN for this stage:
+   *
+   *   arn:aws:apigateway:{region}::/restapis/{restApiId}/stages/{stageName}
+   *
+   * Note that this is separate from the execute-api ARN for methods and resources
+   * within this stage.
+   *
+   * @attribute
+   */
+  public get stageArn() {
+    return Stack.of(this).formatArn({
+      arnFormat: ArnFormat.SLASH_RESOURCE_SLASH_RESOURCE_NAME,
+      service: 'apigateway',
+      account: '',
+      resource: 'restapis',
+      resourceName: `${this.restApi.restApiId}/stages/${this.stageName}`,
+    });
   }
 
   private renderMethodSettings(props: StageProps): CfnStage.MethodSettingProperty[] | undefined {
@@ -284,7 +312,7 @@ export class Stage extends Resource implements IStage {
     };
 
     // if any of them are defined, add an entry for '/*/*'.
-    const hasCommonOptions = Object.keys(commonMethodOptions).map(v => (commonMethodOptions as any)[v]).filter(x => x).length > 0;
+    const hasCommonOptions = Object.keys(commonMethodOptions).map(v => (commonMethodOptions as any)[v]).filter(x => x !== undefined).length > 0;
     if (hasCommonOptions) {
       settings.push(renderEntry('/*/*', commonMethodOptions));
     }
@@ -314,12 +342,101 @@ export class Stage extends Resource implements IStage {
         cacheDataEncrypted: options.cacheDataEncrypted,
         cacheTtlInSeconds: options.cacheTtl && options.cacheTtl.toSeconds(),
         cachingEnabled: options.cachingEnabled,
-        dataTraceEnabled: options.dataTraceEnabled,
+        dataTraceEnabled: options.dataTraceEnabled ?? false,
         loggingLevel: options.loggingLevel,
         metricsEnabled: options.metricsEnabled,
         throttlingBurstLimit: options.throttlingBurstLimit,
         throttlingRateLimit: options.throttlingRateLimit,
       };
     }
+  }
+
+  /**
+   * Returns the given named metric for this stage
+   */
+  public metric(metricName: string, props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return new cloudwatch.Metric({
+      namespace: 'AWS/ApiGateway',
+      metricName,
+      dimensionsMap: { ApiName: this.restApi.restApiName, Stage: this.stageName },
+      ...props,
+    }).attachTo(this);
+  }
+
+  /**
+   * Metric for the number of client-side errors captured in a given period.
+   *
+   * @default - sum over 5 minutes
+   */
+  public metricClientError(props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return this.cannedMetric(ApiGatewayMetrics._4XxErrorSum, props);
+  }
+
+  /**
+   * Metric for the number of server-side errors captured in a given period.
+   *
+   * @default - sum over 5 minutes
+   */
+  public metricServerError(props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return this.cannedMetric(ApiGatewayMetrics._5XxErrorSum, props);
+  }
+
+  /**
+   * Metric for the number of requests served from the API cache in a given period.
+   *
+   * @default - sum over 5 minutes
+   */
+  public metricCacheHitCount(props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return this.cannedMetric(ApiGatewayMetrics.cacheHitCountSum, props);
+  }
+
+  /**
+   * Metric for the number of requests served from the backend in a given period,
+   * when API caching is enabled.
+   *
+   * @default - sum over 5 minutes
+   */
+  public metricCacheMissCount(props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return this.cannedMetric(ApiGatewayMetrics.cacheMissCountSum, props);
+  }
+
+  /**
+   * Metric for the total number API requests in a given period.
+   *
+   * @default - sample count over 5 minutes
+   */
+  public metricCount(props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return this.cannedMetric(ApiGatewayMetrics.countSum, {
+      statistic: 'SampleCount',
+      ...props,
+    });
+  }
+
+  /**
+   * Metric for the time between when API Gateway relays a request to the backend
+   * and when it receives a response from the backend.
+   *
+   * @default - average over 5 minutes.
+   */
+  public metricIntegrationLatency(props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return this.cannedMetric(ApiGatewayMetrics.integrationLatencyAverage, props);
+  }
+
+  /**
+   * The time between when API Gateway receives a request from a client
+   * and when it returns a response to the client.
+   * The latency includes the integration latency and other API Gateway overhead.
+   *
+   * @default - average over 5 minutes.
+   */
+  public metricLatency(props?: cloudwatch.MetricOptions): cloudwatch.Metric {
+    return this.cannedMetric(ApiGatewayMetrics.latencyAverage, props);
+  }
+
+  private cannedMetric(fn: (dims: { ApiName: string; Stage: string }) => cloudwatch.MetricProps, props?: cloudwatch.MetricOptions) {
+    return new cloudwatch.Metric({
+      ...fn({ ApiName: this.restApi.restApiName, Stage: this.stageName }),
+      ...props,
+    }).attachTo(this);
   }
 }

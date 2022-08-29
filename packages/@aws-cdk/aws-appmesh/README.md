@@ -49,6 +49,17 @@ const mesh = new appmesh.Mesh(this, 'AppMesh', {
 });
 ```
 
+A mesh with an IP preference can be created by providing the property `serviceDiscovery` that specifes an `ipPreference`.
+
+```ts
+const mesh = new appmesh.Mesh(this, 'AppMesh', {
+  meshName: 'myAwsMesh',
+  serviceDiscovery: {
+    ipPreference: appmesh.IpPreference.IPV4_ONLY,
+  },
+});
+```
+
 ## Adding VirtualRouters
 
 A _mesh_ uses  _virtual routers_ as logical units to route requests to _virtual nodes_.
@@ -236,6 +247,24 @@ The `backends` property can be added with `node.addBackend()`. In the example, w
 
 The `backendDefaults` property is added to the node while creating the virtual node. These are the virtual node's default settings for all backends.
 
+The `VirtualNode.addBackend()` method is especially useful if you want to create a circular traffic flow by having a Virtual Service as a backend whose provider is that same Virtual Node:
+
+```ts
+declare const mesh: appmesh.Mesh;
+
+const node = new appmesh.VirtualNode(this, 'node', {
+  mesh,
+  serviceDiscovery: appmesh.ServiceDiscovery.dns('node'),
+});
+
+const virtualService = new appmesh.VirtualService(this, 'service-1', {
+  virtualServiceProvider: appmesh.VirtualServiceProvider.virtualNode(node),
+  virtualServiceName: 'service1.domain.local',
+});
+
+node.addBackend(appmesh.Backend.virtualService(virtualService));
+```
+
 ### Adding TLS to a listener
 
 The `tls` property specifies TLS configuration when creating a listener for a virtual node or a virtual gateway. 
@@ -404,6 +433,48 @@ const gateway = new appmesh.VirtualGateway(this, 'gateway', {
     },
   })],
   virtualGatewayName: 'gateway',
+});
+```
+
+### Adding an IP Preference to a Virtual Node
+
+An `ipPreference` can be specified as part of a Virtual Node's service discovery. An IP preference defines how clients for this Virtual Node will interact with it.
+
+There a four different IP preferences available to use which each specify what IP versions this Virtual Node will use and prefer.
+
+- `IPv4_ONLY` - Only use IPv4. For CloudMap service discovery, only IPv4 addresses returned from CloudMap will be used. For DNS service discovery, Envoy's DNS resolver will only resolve DNS queries for IPv4.
+
+- `IPv4_PREFERRED` - Prefer IPv4 and fall back to IPv6. For CloudMap service discovery, an IPv4 address will be used if returned from CloudMap. Otherwise, an IPv6 address will be used if available. For DNS service discovery, Envoy's DNS resolver will first attempt to resolve DNS queries using IPv4 and fall back to IPv6.
+
+- `IPv6_ONLY` - Only use IPv6. For CloudMap service discovery, only IPv6 addresses returned from CloudMap will be used. For DNS service discovery, Envoy's DNS resolver will only resolve DNS queries for IPv6.
+
+- `IPv6_PREFERRED` - Prefer IPv6 and fall back to IPv4. For CloudMap service discovery, an IPv6 address will be used if returned from CloudMap. Otherwise, an IPv4 address will be used if available. For DNS service discovery, Envoy's DNS resolver will first attempt to resolve DNS queries using IPv6 and fall back to IPv4.
+
+```ts
+const mesh = new appmesh.Mesh(stack, 'mesh', {
+  meshName: 'mesh-with-preference',
+});
+
+// Virtual Node with DNS service discovery and an IP preference
+const dnsNode = new appmesh.VirtualNode(stack, 'dns-node', {
+  mesh,
+  serviceDiscovery: appmesh.ServiceDiscovery.dns('test', appmesh.DnsResponseType.LOAD_BALANCER, appmesh.IpPreference.IPV4_ONLY),
+});
+
+// Virtual Node with CloudMap service discovery and an IP preference
+const vpc = new ec2.Vpc(stack, 'vpc');
+const namespace = new cloudmap.PrivateDnsNamespace(stack, 'test-namespace', {
+  vpc,
+  name: 'domain.local',
+});
+const service = namespace.createService('Svc');
+
+const instanceAttribute : { [key: string]: string} = {};
+instanceAttribute.testKey = 'testValue';
+
+const cloudmapNode = new appmesh.VirtualNode(stack, 'cloudmap-node', {
+  mesh,
+  serviceDiscovery: appmesh.ServiceDiscovery.cloudMap(service, instanceAttribute, appmesh.IpPreference.IPV4_ONLY),
 });
 ```
 

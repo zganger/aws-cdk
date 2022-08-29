@@ -91,7 +91,7 @@ your domain name, and provide one (or more) domain names from the certificate fo
 
 The certificate must be present in the AWS Certificate Manager (ACM) service in the US East (N. Virginia) region; the certificate
 may either be created by ACM, or created elsewhere and imported into ACM. When a certificate is used, the distribution will support HTTPS connections
-from SNI only and a minimum protocol version of TLSv1.2_2021 if the '@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021' feature flag is set, and TLSv1.2_2019 otherwise. 
+from SNI only and a minimum protocol version of TLSv1.2_2021 if the `@aws-cdk/aws-cloudfront:defaultSecurityPolicyTLSv1.2_2021` feature flag is set, and TLSv1.2_2019 otherwise. 
 
 ```ts
 // To use your own domain name in a Distribution, you must associate a certificate
@@ -121,6 +121,7 @@ new cloudfront.Distribution(this, 'myDist', {
   defaultBehavior: { origin: new origins.S3Origin(myBucket) },
   domainNames: ['www.example.com'],
   minimumProtocolVersion: cloudfront.SecurityPolicyProtocol.TLS_V1_2016,
+  sslSupportMethod: cloudfront.SSLMethod.SNI,
 });
 ```
 
@@ -260,6 +261,58 @@ new cloudfront.Distribution(this, 'myDistCustomPolicy', {
 });
 ```
 
+### Customizing Response Headers with Response Headers Policies
+
+You can configure CloudFront to add one or more HTTP headers to the responses that it sends to viewers (web browsers or other clients), without making any changes to the origin or writing any code.
+To specify the headers that CloudFront adds to HTTP responses, you use a response headers policy. CloudFront adds the headers regardless of whether it serves the object from the cache or has to retrieve the object from the origin. If the origin response includes one or more of the headers that’s in a response headers policy, the policy can specify whether CloudFront uses the header it received from the origin or overwrites it with the one in the policy.
+See https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/adding-response-headers.html
+
+```ts
+// Using an existing managed response headers policy
+declare const bucketOrigin: origins.S3Origin;
+new cloudfront.Distribution(this, 'myDistManagedPolicy', {
+  defaultBehavior: {
+    origin: bucketOrigin,
+    responseHeadersPolicy: cloudfront.ResponseHeadersPolicy.CORS_ALLOW_ALL_ORIGINS,
+  },
+});
+
+// Creating a custom response headers policy -- all parameters optional
+const myResponseHeadersPolicy = new cloudfront.ResponseHeadersPolicy(this, 'ResponseHeadersPolicy', {
+  responseHeadersPolicyName: 'MyPolicy',
+  comment: 'A default policy',
+  corsBehavior: {
+    accessControlAllowCredentials: false,
+    accessControlAllowHeaders: ['X-Custom-Header-1', 'X-Custom-Header-2'],
+    accessControlAllowMethods: ['GET', 'POST'],
+    accessControlAllowOrigins: ['*'],
+    accessControlExposeHeaders: ['X-Custom-Header-1', 'X-Custom-Header-2'],
+    accessControlMaxAge: Duration.seconds(600),
+    originOverride: true,
+  },
+  customHeadersBehavior: {
+    customHeaders: [
+      { header: 'X-Amz-Date', value: 'some-value', override: true },
+      { header: 'X-Amz-Security-Token', value: 'some-value', override: false },
+    ],
+  },
+  securityHeadersBehavior: {
+    contentSecurityPolicy: { contentSecurityPolicy: 'default-src https:;', override: true },
+    contentTypeOptions: { override: true },
+    frameOptions: { frameOption: cloudfront.HeadersFrameOption.DENY, override: true },
+    referrerPolicy: { referrerPolicy: cloudfront.HeadersReferrerPolicy.NO_REFERRER, override: true },
+    strictTransportSecurity: { accessControlMaxAge: Duration.seconds(600), includeSubdomains: true, override: true },
+    xssProtection: { protection: true, modeBlock: true, reportUri: 'https://example.com/csp-report', override: true },
+  },
+});
+new cloudfront.Distribution(this, 'myDistCustomPolicy', {
+  defaultBehavior: {
+    origin: bucketOrigin,
+    responseHeadersPolicy: myResponseHeadersPolicy,
+  },
+});
+```
+
 ### Validating signed URLs or signed cookies with Trusted Key Groups
 
 CloudFront Distribution supports validating signed URLs or signed cookies using key groups.
@@ -308,7 +361,7 @@ on every request:
 // A Lambda@Edge function added to default behavior of a Distribution
 // and triggered on every request
 const myFunc = new cloudfront.experimental.EdgeFunction(this, 'MyFunction', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: lambda.Code.fromAsset(path.join(__dirname, 'lambda-handler')),
 });
@@ -339,7 +392,7 @@ If the stack is in `us-east-1`, a "normal" `lambda.Function` can be used instead
 ```ts
 // Using a lambda Function instead of an EdgeFunction for stacks in `us-east-`.
 const myFunc = new lambda.Function(this, 'MyFunction', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: lambda.Code.fromAsset(path.join(__dirname, 'lambda-handler')),
 });
@@ -352,14 +405,14 @@ you can also set a specific stack ID for each Lambda@Edge.
 // Setting stackIds for EdgeFunctions that can be referenced from different applications
 // on the same account.
 const myFunc1 = new cloudfront.experimental.EdgeFunction(this, 'MyFunction1', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: lambda.Code.fromAsset(path.join(__dirname, 'lambda-handler1')),
   stackId: 'edge-lambda-stack-id-1',
 });
 
 const myFunc2 = new cloudfront.experimental.EdgeFunction(this, 'MyFunction2', {
-  runtime: lambda.Runtime.NODEJS_12_X,
+  runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
   code: lambda.Code.fromAsset(path.join(__dirname, 'lambda-handler2')),
   stackId: 'edge-lambda-stack-id-2',
@@ -474,6 +527,20 @@ new cloudfront.Distribution(this, 'myDist', {
 });
 ```
 
+### HTTP Versions
+
+You can configure CloudFront to use a particular version of the HTTP protocol. By default,
+newly created distributions use HTTP/2 but can be configured to use both HTTP/2 and HTTP/3 or
+just HTTP/3. For all supported HTTP versions, see the `HttpVerson` enum.
+
+```ts
+// Configure a distribution to use HTTP/2 and HTTP/3
+new cloudfront.Distribution(this, 'myDist', {
+  defaultBehavior: { origin: new origins.HttpOrigin('www.example.com'); },
+  httpVersion: cloudfront.HttpVersion.HTTP2_AND_3,
+});
+```
+
 ### Importing Distributions
 
 Existing distributions can be imported as well; note that like most imported constructs, an imported distribution cannot be modified.
@@ -486,6 +553,203 @@ const distribution = cloudfront.Distribution.fromDistributionAttributes(this, 'I
   distributionId: '012345ABCDEF',
 });
 ```
+
+## Migrating from the original CloudFrontWebDistribution to the newer Distribution construct
+
+It's possible to migrate a distribution from the original to the modern API.
+The changes necessary are the following:
+
+### The Distribution
+
+Replace `new CloudFrontWebDistribution` with `new Distribution`. Some
+configuration properties have been changed:
+
+| Old API                        | New API                                                                                        |
+|--------------------------------|------------------------------------------------------------------------------------------------|
+| `originConfigs`                | `defaultBehavior`; use `additionalBehaviors` if necessary                                      |
+| `viewerCertificate`            | `certificate`; use `domainNames` for aliases                                                   |
+| `errorConfigurations`          | `errorResponses`                                                                               |
+| `loggingConfig`                | `enableLogging`; configure with `logBucket` `logFilePrefix` and `logIncludesCookies`           |
+| `viewerProtocolPolicy`         | removed; set on each behavior instead. default changed from `REDIRECT_TO_HTTPS` to `ALLOW_ALL` |
+
+After switching constructs, you need to maintain the same logical ID for the underlying [CfnDistribution](https://docs.aws.amazon.com/cdk/api/v1/docs/@aws-cdk_aws-cloudfront.CfnDistribution.html) if you wish to avoid the deletion and recreation of your distribution. 
+To do this, use [escape hatches](https://docs.aws.amazon.com/cdk/v2/guide/cfn_layer.html) to override the logical ID created by the new Distribution construct with the logical ID created by the old construct.
+
+Example:
+
+```ts
+declare const sourceBucket: s3.Bucket;
+
+const myDistribution = new cloudfront.Distribution(this, 'MyCfWebDistribution', {
+  defaultBehavior: {
+    origin: new origins.S3Origin(sourceBucket),
+  },
+});
+const cfnDistribution = myDistribution.node.defaultChild as cloudfront.CfnDistribution;
+cfnDistribution.overrideLogicalId('MyDistributionCFDistribution3H55TI9Q');
+```
+
+### Behaviors
+
+The modern API makes use of the [CloudFront Origins](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_cloudfront_origins-readme.html) module to easily configure your origin. Replace your origin configuration with the relevant CloudFront Origins class. For example, here's a behavior with an S3 origin:
+
+```ts
+declare const sourceBucket: s3.Bucket;
+declare const oai: cloudfront.OriginAccessIdentity;
+
+new cloudfront.CloudFrontWebDistribution(this, 'MyCfWebDistribution', {
+  originConfigs: [
+    {
+      s3OriginSource: {
+        s3BucketSource: sourceBucket,
+        originAccessIdentity: oai,
+      },
+      behaviors : [ {isDefaultBehavior: true}],
+    },
+  ],
+});
+```
+
+Becomes:
+
+```ts
+declare const sourceBucket: s3.Bucket;
+
+const distribution = new cloudfront.Distribution(this, 'MyCfWebDistribution', {
+  defaultBehavior: {
+    origin: new origins.S3Origin(sourceBucket) // This class automatically creates an Origin Access Identity
+  },
+});
+```
+
+In the original API all behaviors are defined in the `originConfigs` property. The new API is optimized for a single origin and behavior, so the default behavior and additional behaviors will be defined separately.
+
+```ts
+declare const sourceBucket: s3.Bucket;
+declare const oai: cloudfront.OriginAccessIdentity;
+
+new cloudfront.CloudFrontWebDistribution(this, 'MyCfWebDistribution', {
+  originConfigs: [
+    {
+      s3OriginSource: {
+        s3BucketSource: sourceBucket,
+        originAccessIdentity: oai,
+      },
+      behaviors: [ {isDefaultBehavior: true}],
+    },
+    {
+      customOriginSource: {
+        domainName: 'MYALIAS',
+      },
+      behaviors: [{ pathPattern: '/somewhere' }]
+    }
+  ],
+});
+```
+
+Becomes:
+
+```ts
+declare const sourceBucket: s3.Bucket;
+
+const distribution = new cloudfront.Distribution(this, 'MyCfWebDistribution', {
+  defaultBehavior: {
+    origin: new origins.S3Origin(sourceBucket) // This class automatically creates an Origin Access Identity
+  },
+  additionalBehaviors: {
+    '/somewhere': {
+      origin: new origins.HttpOrigin('MYALIAS'),
+    }
+  }
+});
+```
+
+### Certificates
+
+If you are using an ACM certificate, you can pass the certificate directly to the `certificate` prop.
+Any aliases used before in the `ViewerCertificate` class should be passed in to the `domainNames` prop in the modern API.
+
+```ts
+import * as acm from '@aws-cdk/aws-certificatemanager';
+declare const certificate: acm.Certificate;
+declare const sourceBucket: s3.Bucket;
+
+const viewerCertificate = cloudfront.ViewerCertificate.fromAcmCertificate(certificate, {
+  aliases: ['MYALIAS'],
+});
+
+new cloudfront.CloudFrontWebDistribution(this, 'MyCfWebDistribution', {
+  originConfigs: [
+    {
+      s3OriginSource: {
+        s3BucketSource: sourceBucket,
+      },
+      behaviors : [ {isDefaultBehavior: true} ],
+    },
+  ],
+  viewerCertificate: viewerCertificate,
+});
+```
+
+Becomes:
+
+```ts
+import * as acm from '@aws-cdk/aws-certificatemanager';
+declare const certificate: acm.Certificate;
+declare const sourceBucket: s3.Bucket;
+
+const distribution = new cloudfront.Distribution(this, 'MyCfWebDistribution', {
+  defaultBehavior: {
+    origin: new origins.S3Origin(sourceBucket),
+  },
+  domainNames: ['MYALIAS'],
+  certificate: certificate,
+});
+```
+
+IAM certificates aren't directly supported by the new API, but can be easily configured through [escape hatches](https://docs.aws.amazon.com/cdk/v2/guide/cfn_layer.html)
+
+```ts
+declare const sourceBucket: s3.Bucket;
+const viewerCertificate = cloudfront.ViewerCertificate.fromIamCertificate('MYIAMROLEIDENTIFIER', {
+  aliases: ['MYALIAS'],
+});
+
+new cloudfront.CloudFrontWebDistribution(this, 'MyCfWebDistribution', {
+  originConfigs: [
+    {
+      s3OriginSource: {
+        s3BucketSource: sourceBucket,
+      },
+      behaviors : [ {isDefaultBehavior: true} ],
+    },
+  ],
+  viewerCertificate: viewerCertificate,
+});
+```
+
+Becomes: 
+
+```ts
+declare const sourceBucket: s3.Bucket;
+const distribution = new cloudfront.Distribution(this, 'MyCfWebDistribution', {
+  defaultBehavior: {
+    origin: new origins.S3Origin(sourceBucket),
+  },
+  domainNames: ['MYALIAS'],
+});
+
+const cfnDistribution = distribution.node.defaultChild as cloudfront.CfnDistribution;
+
+cfnDistribution.addPropertyOverride('ViewerCertificate.IamCertificateId', 'MYIAMROLEIDENTIFIER');
+cfnDistribution.addPropertyOverride('ViewerCertificate.SslSupportMethod', 'sni-only');
+```
+
+### Other changes
+
+A number of default settings have changed on the new API when creating a new distribution, behavior, and origin. 
+After making the major changes needed for the migration, run `cdk diff` to see what settings have changed. 
+If no changes are desired during migration, you will at the least be able to use [escape hatches](https://docs.aws.amazon.com/cdk/v2/guide/cfn_layer.html) to override what the CDK synthesizes, if you can't change the properties directly.
 
 ## CloudFrontWebDistribution API
 
@@ -610,7 +874,7 @@ new cloudfront.CloudFrontWebDistribution(this, 'MyDistribution', {
       behaviors : [ {isDefaultBehavior: true}],
     },
   ],
-  geoRestriction: cloudfront.GeoRestriction.whitelist('US', 'UK'),
+  geoRestriction: cloudfront.GeoRestriction.allowlist('US', 'GB'),
 });
 ```
 

@@ -1,5 +1,3 @@
-/* eslint-disable import/no-extraneous-dependencies */
-import '@aws-cdk/assert-internal/jest';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as ecr_assets from '@aws-cdk/aws-ecr-assets';
@@ -62,13 +60,17 @@ export class OneStackApp extends Stage {
   }
 }
 
+export interface AppWithOutputProps extends StageProps {
+  readonly stackId?: string;
+}
+
 export class AppWithOutput extends Stage {
   public readonly theOutput: CfnOutput;
 
-  constructor(scope: Construct, id: string, props?: StageProps) {
+  constructor(scope: Construct, id: string, props: AppWithOutputProps = {}) {
     super(scope, id, props);
 
-    const stack = new BucketStack(this, 'Stack');
+    const stack = new BucketStack(this, props.stackId ?? 'Stack');
     this.theOutput = new CfnOutput(stack, 'MyOutput', { value: stack.bucket.bucketName });
   }
 }

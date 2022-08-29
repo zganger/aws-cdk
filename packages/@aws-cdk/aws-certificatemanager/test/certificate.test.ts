@@ -1,7 +1,7 @@
-import '@aws-cdk/assert-internal/jest';
+import { Template } from '@aws-cdk/assertions';
 import * as route53 from '@aws-cdk/aws-route53';
 import { Duration, Lazy, Stack } from '@aws-cdk/core';
-import { Certificate, CertificateValidation, ValidationMethod } from '../lib';
+import { Certificate, CertificateValidation } from '../lib';
 
 test('apex domain selection by default', () => {
   const stack = new Stack();
@@ -10,7 +10,7 @@ test('apex domain selection by default', () => {
     domainName: 'test.example.com',
   });
 
-  expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+  Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
     DomainName: 'test.example.com',
     DomainValidationOptions: [{
       DomainName: 'test.example.com',
@@ -43,12 +43,12 @@ test('validation domain can be overridden', () => {
 
   new Certificate(stack, 'Certificate', {
     domainName: 'test.example.com',
-    validationDomains: {
+    validation: CertificateValidation.fromEmail({
       'test.example.com': 'test.example.com',
-    },
+    }),
   });
 
-  expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+  Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
     DomainValidationOptions: [{
       DomainName: 'test.example.com',
       ValidationDomain: 'test.example.com',
@@ -72,10 +72,10 @@ test('can configure validation method', () => {
 
   new Certificate(stack, 'Certificate', {
     domainName: 'test.example.com',
-    validationMethod: ValidationMethod.DNS,
+    validation: CertificateValidation.fromDns(),
   });
 
-  expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+  Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
     DomainName: 'test.example.com',
     ValidationMethod: 'DNS',
   });
@@ -98,12 +98,12 @@ test('validationdomains can be given for a Token', () => {
   const domainName = Lazy.string({ produce: () => 'my.example.com' });
   new Certificate(stack, 'Certificate', {
     domainName,
-    validationDomains: {
+    validation: CertificateValidation.fromEmail({
       [domainName]: 'example.com',
-    },
+    }),
   });
 
-  expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+  Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
     DomainName: 'my.example.com',
     DomainValidationOptions: [{
       DomainName: 'my.example.com',
@@ -123,7 +123,7 @@ test('CertificateValidation.fromEmail', () => {
     }),
   });
 
-  expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+  Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
     DomainName: 'test.example.com',
     SubjectAlternativeNames: ['extra.example.com'],
     DomainValidationOptions: [
@@ -151,7 +151,7 @@ describe('CertificateValidation.fromDns', () => {
       validation: CertificateValidation.fromDns(),
     });
 
-    expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+    Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
       DomainName: 'test.example.com',
       SubjectAlternativeNames: ['extra.example.com'],
       ValidationMethod: 'DNS',
@@ -170,7 +170,7 @@ describe('CertificateValidation.fromDns', () => {
       validation: CertificateValidation.fromDns(exampleCom),
     });
 
-    expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+    Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
       DomainName: 'test.example.com',
       DomainValidationOptions: [
         {
@@ -178,6 +178,28 @@ describe('CertificateValidation.fromDns', () => {
           HostedZoneId: {
             Ref: 'ExampleCom20E1324B',
           },
+        },
+      ],
+      ValidationMethod: 'DNS',
+    });
+  });
+
+  test('with an imported hosted zone', () => {
+    const stack = new Stack();
+
+    const exampleCom = route53.PublicHostedZone.fromHostedZoneId(stack, 'ExampleCom', 'sampleid');
+
+    new Certificate(stack, 'Certificate', {
+      domainName: 'test.example.com',
+      validation: CertificateValidation.fromDns(exampleCom),
+    });
+
+    Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
+      DomainName: 'test.example.com',
+      DomainValidationOptions: [
+        {
+          DomainName: 'test.example.com',
+          HostedZoneId: 'sampleid',
         },
       ],
       ValidationMethod: 'DNS',
@@ -198,7 +220,7 @@ describe('CertificateValidation.fromDns', () => {
     });
 
     //Wildcard domain names are de-duped.
-    expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+    Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
       DomainName: 'test.example.com',
       DomainValidationOptions: [
         {
@@ -226,7 +248,7 @@ describe('CertificateValidation.fromDns', () => {
     });
 
     //Wildcard domain names are de-duped.
-    expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+    Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
       DomainName: 'test.example.com',
       DomainValidationOptions: [
         {
@@ -275,7 +297,7 @@ test('CertificateValidation.fromDnsMultiZone', () => {
     }),
   });
 
-  expect(stack).toHaveResource('AWS::CertificateManager::Certificate', {
+  Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
     DomainName: 'test.example.com',
     DomainValidationOptions: [
       {
@@ -298,5 +320,47 @@ test('CertificateValidation.fromDnsMultiZone', () => {
       },
     ],
     ValidationMethod: 'DNS',
+  });
+});
+
+describe('Transparency logging settings', () => {
+  test('leaves transparency logging untouched by default', () => {
+    const stack = new Stack();
+
+    new Certificate(stack, 'Certificate', {
+      domainName: 'test.example.com',
+    });
+
+    const certificateNodes = Template.fromStack(stack).findResources('AWS::CertificateManager::Certificate');
+    expect(certificateNodes.Certificate4E7ABB08).toBeDefined();
+    expect(certificateNodes.Certificate4E7ABB08.CertificateTransparencyLoggingPreference).toBeUndefined();
+  });
+
+  test('can enable transparency logging', () => {
+    const stack = new Stack();
+
+    new Certificate(stack, 'Certificate', {
+      domainName: 'test.example.com',
+      transparencyLoggingEnabled: true,
+    });
+
+    Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
+      DomainName: 'test.example.com',
+      CertificateTransparencyLoggingPreference: 'ENABLED',
+    });
+  });
+
+  test('can disable transparency logging', () => {
+    const stack = new Stack();
+
+    new Certificate(stack, 'Certificate', {
+      domainName: 'test.example.com',
+      transparencyLoggingEnabled: false,
+    });
+
+    Template.fromStack(stack).hasResourceProperties('AWS::CertificateManager::Certificate', {
+      DomainName: 'test.example.com',
+      CertificateTransparencyLoggingPreference: 'DISABLED',
+    });
   });
 });

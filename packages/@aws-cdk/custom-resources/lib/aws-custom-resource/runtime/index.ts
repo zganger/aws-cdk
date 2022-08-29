@@ -79,9 +79,8 @@ function installLatestSdk(): void {
   latestSdkInstalled = true;
 }
 
-const patchedServices: { serviceName: string; apiVersions: string[] }[] = [
-  { serviceName: 'OpenSearch', apiVersions: ['2021-01-01'] },
-];
+// no currently patched services
+const patchedServices: { serviceName: string; apiVersions: string[] }[] = [];
 /**
  * Patches the AWS SDK by loading service models in the same manner as the actual SDK
  */
@@ -134,7 +133,7 @@ export async function handler(event: AWSLambda.CloudFormationCustomResourceEvent
       console.log(`Failed to patch AWS SDK: ${e}. Proceeding with the installed copy.`);
     }
 
-    console.log(JSON.stringify(event));
+    console.log(JSON.stringify({ ...event, ResponseURL: '...' }));
     console.log('AWS SDK VERSION: ' + AWS.VERSION);
 
     event.ResourceProperties.Create = decodeCall(event.ResourceProperties.Create);
@@ -161,8 +160,8 @@ export async function handler(event: AWSLambda.CloudFormationCustomResourceEvent
 
     if (call) {
 
+      let credentials;
       if (call.assumedRoleArn) {
-
         const timestamp = (new Date()).getTime();
 
         const params = {
@@ -170,10 +169,9 @@ export async function handler(event: AWSLambda.CloudFormationCustomResourceEvent
           RoleSessionName: `${timestamp}-${physicalResourceId}`.substring(0, 64),
         };
 
-        AWS.config.credentials = new AWS.ChainableTemporaryCredentials({
+        credentials = new AWS.ChainableTemporaryCredentials({
           params: params,
         });
-
       }
 
       if (!Object.prototype.hasOwnProperty.call(AWS, call.service)) {
@@ -181,6 +179,7 @@ export async function handler(event: AWSLambda.CloudFormationCustomResourceEvent
       }
       const awsService = new (AWS as any)[call.service]({
         apiVersion: call.apiVersion,
+        credentials: credentials,
         region: call.region,
       });
 

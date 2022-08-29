@@ -10,16 +10,18 @@ pull_request_rules:
       label:
         add: [ contribution/core ]
     conditions:
-      - author~=^(eladb|RomainMuller|garnaat|nija-at|skinny85|rix0rrr|NGL321|Jerry-AWS|MrArnoldPalmer|NetaNir|iliapolo|njlynch|ericzbeard|ccfife|fulghum|pkandasamy91|SoManyHs|uttarasridhar|otaviomacedo|BenChaimberg|madeline-k|BryanPan342|kaizen3031593|comcalvi|Chriscbr|corymhall|peterwoodworth|ryparker)$
+      - author~=^(RomainMuller|rix0rrr|Jerry-AWS|MrArnoldPalmer|iliapolo|uttarasridhar|otaviomacedo|madeline-k|kaizencc|comcalvi|corymhall|peterwoodworth|ryparker|TheRealAmazonKendra|yuth|vinayak-kukreja|Naumel|mrgrain)$
       - -label~="contribution/core"
   - name: automatic merge
     actions:
       comment:
-        message: Thank you for contributing! Your pull request will be updated from master and then merged automatically (do not update manually, and be sure to [allow changes to be pushed to your fork](https://help.github.com/en/github/collaborating-with-issues-and-pull-requests/allowing-changes-to-a-pull-request-branch-created-from-a-fork)).
+        message: Thank you for contributing! Your pull request will be updated from main and then merged automatically (do not update manually, and be sure to [allow changes to be pushed to your fork](https://help.github.com/en/github/collaborating-with-issues-and-pull-requests/allowing-changes-to-a-pull-request-branch-created-from-a-fork)).
       queue:
         name: default
         method: squash
-        commit_message: title+body
+        commit_message_template: |-
+          {{ title }} (#{{ number }})
+          {{ body }}
     conditions:
       - base!=release
       - -title~=(WIP|wip)
@@ -40,7 +42,9 @@ pull_request_rules:
       queue:
         name: default
         method: squash
-        commit_message: title+body
+        commit_message_template: |-
+          {{ title }} (#{{ number }})
+          {{ body }}
     conditions:
       - base!=release
       - -title~=(WIP|wip)
@@ -62,7 +66,9 @@ pull_request_rules:
       queue:
         name: default
         method: merge
-        commit_message: title+body
+        commit_message_template: |-
+          {{ title }} (#{{ number }})
+          {{ body }}
     conditions:
       - -title~=(WIP|wip)
       - -label~=(blocked|do-not-merge)
@@ -86,7 +92,7 @@ pull_request_rules:
       - author!=dependabot[bot]
       - author!=dependabot-preview[bot]
       - label!=contribution/core
-      - base=master
+      - base=main
       - -merged
       - -closed
   - name: if fails conventional commits
@@ -106,7 +112,9 @@ pull_request_rules:
       queue:
         name: default
         method: squash
-        commit_message: title+body
+        commit_message_template: |-
+          {{ title }} (#{{ number }})
+          {{ body }}
     conditions:
       - -title~=(WIP|wip)
       - -label~=(blocked|do-not-merge)

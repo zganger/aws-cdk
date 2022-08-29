@@ -1,8 +1,9 @@
 import * as cxapi from '@aws-cdk/cx-api';
+import { Construct } from 'constructs';
 import {
   App, App as Root, CfnCondition,
-  CfnDeletionPolicy, CfnResource, Construct,
-  Fn, RemovalPolicy, Resource, Stack,
+  CfnDeletionPolicy, CfnResource,
+  Fn, IResource, RemovalPolicy, Resource, Stack,
 } from '../lib';
 import { synthesize } from '../lib/private/synthesis';
 import { toCloudFormation } from './util';
@@ -29,14 +30,11 @@ describe('resource', () => {
         },
       },
     });
-
-
   });
 
   test('resources must reside within a Stack and fail upon creation if not', () => {
     const root = new Root();
     expect(() => new CfnResource(root, 'R1', { type: 'ResourceType' })).toThrow();
-
   });
 
   test('all entities have a logical ID calculated based on their full path in the tree', () => {
@@ -49,8 +47,6 @@ describe('resource', () => {
 
     expect(withoutHash(stack.resolve(res1.logicalId))).toEqual('level1childoflevel1');
     expect(withoutHash(stack.resolve(res2.logicalId))).toEqual('level1level2level3childoflevel3');
-
-
   });
 
   test('resource.props can only be accessed by derived classes', () => {
@@ -64,8 +60,6 @@ describe('resource', () => {
         MyResource: { Type: 'My::Counter', Properties: { Count: 13 } },
       },
     });
-
-
   });
 
   test('resource attributes can be retrieved using getAtt(s) or attribute properties', () => {
@@ -94,8 +88,6 @@ describe('resource', () => {
         },
       },
     });
-
-
   });
 
   test('ARN-type resource attributes have some common functionality', () => {
@@ -121,8 +113,6 @@ describe('resource', () => {
         },
       },
     });
-
-
   });
 
   test('resource.addDependency(e) can be used to add a DependsOn on another resource', () => {
@@ -152,8 +142,6 @@ describe('resource', () => {
         Resource3: { Type: 'MyResourceType' },
       },
     });
-
-
   });
 
   test('if addDependency is called multiple times with the same resource, it will only appear once', () => {
@@ -186,7 +174,6 @@ describe('resource', () => {
         },
       },
     });
-
   });
 
   test('conditions can be attached to a resource', () => {
@@ -199,8 +186,6 @@ describe('resource', () => {
       Resources: { Resource: { Type: 'Type', Condition: 'MyCondition' } },
       Conditions: { MyCondition: { 'Fn::Not': [{ 'Fn::Equals': ['a', 'b'] }] } },
     });
-
-
   });
 
   test('creation/update/updateReplace/deletion policies can be set on a resource', () => {
@@ -240,8 +225,6 @@ describe('resource', () => {
         },
       },
     });
-
-
   });
 
   test('update policies UseOnlineResharding flag', () => {
@@ -260,8 +243,6 @@ describe('resource', () => {
         },
       },
     });
-
-
   });
 
   test('metadata can be set on a resource', () => {
@@ -284,14 +265,11 @@ describe('resource', () => {
         },
       },
     });
-
-
   });
 
   test('the "type" property is required when creating a resource', () => {
     const stack = new Stack();
     expect(() => new CfnResource(stack, 'Resource', { notypehere: true } as any)).toThrow();
-
   });
 
   test('removal policy is a high level abstraction of deletion policy used by l2', () => {
@@ -315,7 +293,33 @@ describe('resource', () => {
         Default2: { Type: 'T4', DeletionPolicy: 'Retain', UpdateReplacePolicy: 'Retain' }, // implicit default
       },
     });
+  });
 
+  test('applyRemovalPolicy available for interface resources', () => {
+    class Child extends Resource {
+      constructor(scope: Construct, id: string) {
+        super(scope, id);
+
+        new CfnResource(this, 'Resource', {
+          type: 'ChildResourceType',
+        });
+      }
+    }
+
+    const stack = new Stack();
+    const child: IResource = new Child(stack, 'Child');
+
+    child.applyRemovalPolicy(RemovalPolicy.RETAIN);
+
+    expect(toCloudFormation(stack)).toEqual({
+      Resources: {
+        ChildDAB30558: {
+          DeletionPolicy: 'Retain',
+          Type: 'ChildResourceType',
+          UpdateReplacePolicy: 'Retain',
+        },
+      },
+    });
   });
 
   test('addDependency adds all dependencyElements of dependent constructs', () => {
@@ -381,7 +385,6 @@ describe('resource', () => {
         },
       },
     });
-
   });
 
   test('resource.ref returns the {Ref} token', () => {
@@ -389,7 +392,6 @@ describe('resource', () => {
     const r = new CfnResource(stack, 'MyResource', { type: 'R' });
 
     expect(stack.resolve(r.ref)).toEqual({ Ref: 'MyResource' });
-
   });
 
   describe('overrides', () => {
@@ -415,8 +417,6 @@ describe('resource', () => {
           },
         },
       });
-
-
     });
 
     test('addPropertyOverride() allows assigning an attribute of a different resource', () => {
@@ -446,8 +446,6 @@ describe('resource', () => {
           },
         },
       });
-
-
     });
 
     test('addOverride(p, null) will assign an "null" value', () => {
@@ -480,8 +478,6 @@ describe('resource', () => {
           },
         },
       });
-
-
     });
 
     test('addOverride(p, undefined) can be used to delete a value', () => {
@@ -514,8 +510,6 @@ describe('resource', () => {
           },
         },
       });
-
-
     });
 
     test('addOverride(p, undefined) will not create empty trees', () => {
@@ -539,8 +533,6 @@ describe('resource', () => {
           },
         },
       });
-
-
     });
 
     test('addDeletionOverride(p) and addPropertyDeletionOverride(pp) are sugar for `undefined`', () => {
@@ -575,8 +567,6 @@ describe('resource', () => {
           },
         },
       });
-
-
     });
 
     test('addOverride(p, v) will overwrite any non-objects along the path', () => {
@@ -613,7 +603,6 @@ describe('resource', () => {
           },
         },
       });
-
     });
 
     test('addOverride(p, v) will not split on escaped dots', () => {
@@ -646,7 +635,6 @@ describe('resource', () => {
           },
         },
       });
-
     });
 
     test('addPropertyOverride(pp, v) is a sugar for overriding properties', () => {
@@ -671,7 +659,6 @@ describe('resource', () => {
           },
         },
       });
-
     });
 
     test('overrides are applied after render', () => {
@@ -703,11 +690,79 @@ describe('resource', () => {
           },
         },
       });
+    });
 
+    test('overrides allow overriding one intrinsic with another', () => {
+      // GIVEN
+      const stack = new Stack();
+
+      const resource = new CfnResource(stack, 'MyResource', {
+        type: 'MyResourceType',
+        properties: {
+          prop1: Fn.ref('Param'),
+        },
+      });
+
+      // WHEN
+      resource.addPropertyOverride('prop1', Fn.join('-', ['hello', Fn.ref('Param')]));
+      const cfn = toCloudFormation(stack);
+
+      // THEN
+      expect(cfn.Resources.MyResource).toEqual({
+        Type: 'MyResourceType',
+        Properties: {
+          prop1: {
+            'Fn::Join': [
+              '-',
+              [
+                'hello',
+                {
+                  Ref: 'Param',
+                },
+              ],
+            ],
+          },
+        },
+      });
+    });
+
+    test('overrides allow overriding a nested intrinsic', () => {
+      // GIVEN
+      const stack = new Stack();
+
+      const resource = new CfnResource(stack, 'MyResource', {
+        type: 'MyResourceType',
+        properties: {
+          prop1: Fn.importValue(Fn.sub('${Sub}', { Sub: 'Value' })),
+        },
+      });
+
+      // WHEN
+      resource.addPropertyOverride('prop1', Fn.importValue(Fn.join('-', ['abc', Fn.sub('${Sub}', { Sub: 'Value' })])));
+      const cfn = toCloudFormation(stack);
+
+      // THEN
+      expect(cfn.Resources.MyResource).toEqual({
+        Type: 'MyResourceType',
+        Properties: {
+          prop1: {
+            'Fn::ImportValue': {
+              'Fn::Join': [
+                '-',
+                [
+                  'abc',
+                  {
+                    'Fn::Sub': ['${Sub}', { Sub: 'Value' }],
+                  },
+                ],
+              ],
+            },
+          },
+        },
+      });
     });
 
     describe('using mutable properties', () => {
-
       test('can be used by derived classes to specify overrides before render()', () => {
         const stack = new Stack();
 
@@ -727,7 +782,6 @@ describe('resource', () => {
             },
           },
         });
-
       });
 
       test('"properties" is undefined', () => {
@@ -747,7 +801,6 @@ describe('resource', () => {
             },
           },
         });
-
       });
 
       test('"properties" is empty', () => {
@@ -768,7 +821,6 @@ describe('resource', () => {
             },
           },
         });
-
       });
     });
   });
@@ -793,8 +845,6 @@ describe('resource', () => {
          },
       },
     });
-
-
   });
 
   test('cross-stack construct dependencies are not rendered but turned into stack dependencies', () => {
@@ -812,17 +862,11 @@ describe('resource', () => {
     const assembly = app.synth();
     const templateB = assembly.getStackByName(stackB.stackName).template;
 
-    expect(templateB).toEqual({
-      Resources: {
-        Resource: {
-          Type: 'R',
-          // Notice absence of 'DependsOn'
-        },
-      },
+    expect(templateB?.Resources?.Resource).toEqual({
+      Type: 'R',
+      // Notice absence of 'DependsOn'
     });
     expect(stackB.dependencies.map(s => s.node.id)).toEqual(['StackA']);
-
-
   });
 
   test('enableVersionUpgrade can be set on a resource', () => {
@@ -843,8 +887,6 @@ describe('resource', () => {
         },
       },
     });
-
-
   });
 });
 
@@ -888,7 +930,7 @@ class Counter extends CfnResource {
 }
 
 function withoutHash(logId: string) {
-  return logId.substr(0, logId.length - 8);
+  return logId.slice(0, -8);
 }
 
 class CustomizableResource extends CfnResource {
@@ -906,7 +948,7 @@ class CustomizableResource extends CfnResource {
   }
 
   public renderProperties(): { [key: string]: any } {
-    const props = this.updatedProperites;
+    const props = this.updatedProperties;
     const render: { [key: string]: any } = {};
     for (const key of Object.keys(props)) {
       render[key.toUpperCase()] = props[key];
@@ -914,7 +956,7 @@ class CustomizableResource extends CfnResource {
     return render;
   }
 
-  protected get updatedProperites(): { [key: string]: any } {
+  protected get updatedProperties(): { [key: string]: any } {
     const props: { [key: string]: any } = {
       prop1: this.prop1,
       prop2: this.prop2,

@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { CopyOptions } from '@aws-cdk/assets';
 import * as iam from '@aws-cdk/aws-iam';
 import * as kms from '@aws-cdk/aws-kms';
 import * as s3 from '@aws-cdk/aws-s3';
@@ -6,13 +7,6 @@ import * as cdk from '@aws-cdk/core';
 import * as cxapi from '@aws-cdk/cx-api';
 import { Construct } from 'constructs';
 import { toSymlinkFollow } from './compat';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { CopyOptions } from '@aws-cdk/assets';
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct as CoreConstruct } from '@aws-cdk/core';
 
 export interface AssetOptions extends CopyOptions, cdk.FileCopyOptions, cdk.AssetOptions {
   /**
@@ -57,7 +51,7 @@ export interface AssetProps extends AssetOptions {
  * An asset represents a local file or directory, which is automatically uploaded to S3
  * and then can be referenced within a CDK application.
  */
-export class Asset extends CoreConstruct implements cdk.IAsset {
+export class Asset extends Construct implements cdk.IAsset {
   /**
    * Attribute that represents the name of the bucket this asset exists in.
    */
@@ -76,13 +70,13 @@ export class Asset extends CoreConstruct implements cdk.IAsset {
 
   /**
    * Attribute which represents the S3 HTTP URL of this asset.
-   * @example https://s3.us-west-1.amazonaws.com/bucket/key
+   * For example, `https://s3.us-west-1.amazonaws.com/bucket/key`
    */
   public readonly httpUrl: string;
 
   /**
    * Attribute which represents the S3 URL of this asset.
-   * @example s3://bucket/key
+   * For example, `s3://bucket/key`
    */
   public readonly s3ObjectUrl: string;
 
@@ -120,8 +114,15 @@ export class Asset extends CoreConstruct implements cdk.IAsset {
 
   public readonly assetHash: string;
 
+  /**
+   * Indicates if this asset got bundled before staged, or not.
+   */
+  private readonly isBundled: boolean;
+
   constructor(scope: Construct, id: string, props: AssetProps) {
     super(scope, id);
+
+    this.isBundled = props.bundling != null;
 
     // stage the asset source (conditionally).
     const staging = new cdk.AssetStaging(this, 'Stage', {
@@ -191,6 +192,7 @@ export class Asset extends CoreConstruct implements cdk.IAsset {
     // points to a local path in order to enable local invocation of this function.
     resource.cfnOptions.metadata = resource.cfnOptions.metadata || { };
     resource.cfnOptions.metadata[cxapi.ASSET_RESOURCE_METADATA_PATH_KEY] = this.assetPath;
+    resource.cfnOptions.metadata[cxapi.ASSET_RESOURCE_METADATA_IS_BUNDLED_KEY] = this.isBundled;
     resource.cfnOptions.metadata[cxapi.ASSET_RESOURCE_METADATA_PROPERTY_KEY] = resourceProperty;
   }
 

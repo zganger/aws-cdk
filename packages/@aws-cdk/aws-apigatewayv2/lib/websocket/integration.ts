@@ -5,10 +5,6 @@ import { IIntegration } from '../common';
 import { IWebSocketApi } from './api';
 import { IWebSocketRoute } from './route';
 
-// v2 - keep this import as a separate section to reduce merge conflict when forward merging with the v2 branch.
-// eslint-disable-next-line
-import { Construct as CoreConstruct } from '@aws-cdk/core';
-
 /**
  * Represents an Integration for an WebSocket API.
  */
@@ -24,7 +20,11 @@ export enum WebSocketIntegrationType {
   /**
    * AWS Proxy Integration Type
    */
-  AWS_PROXY = 'AWS_PROXY'
+  AWS_PROXY = 'AWS_PROXY',
+  /**
+   * Mock Integration Type
+   */
+  MOCK = 'MOCK'
 }
 
 /**
@@ -81,17 +81,47 @@ export interface WebSocketRouteIntegrationBindOptions {
    * If the `WebSocketRouteIntegration` being bound creates additional constructs,
    * this will be used as their parent scope.
    */
-  readonly scope: CoreConstruct;
+  readonly scope: Construct;
 }
 
 /**
  * The interface that various route integration classes will inherit.
  */
-export interface IWebSocketRouteIntegration {
+export abstract class WebSocketRouteIntegration {
+  private integration?: WebSocketIntegration;
+
+  /**
+   * Initialize an integration for a route on websocket api.
+   * @param id id of the underlying `WebSocketIntegration` construct.
+   */
+  constructor(private readonly id: string) {}
+
+  /**
+   * Internal method called when binding this integration to the route.
+   * @internal
+   */
+  public _bindToRoute(options: WebSocketRouteIntegrationBindOptions): { readonly integrationId: string } {
+    if (this.integration && this.integration.webSocketApi.node.addr !== options.route.webSocketApi.node.addr) {
+      throw new Error('A single integration cannot be associated with multiple APIs.');
+    }
+
+    if (!this.integration) {
+      const config = this.bind(options);
+
+      this.integration = new WebSocketIntegration(options.scope, this.id, {
+        webSocketApi: options.route.webSocketApi,
+        integrationType: config.type,
+        integrationUri: config.uri,
+      });
+    }
+
+    return { integrationId: this.integration.integrationId };
+  }
+
   /**
    * Bind this integration to the route.
    */
-  bind(options: WebSocketRouteIntegrationBindOptions): WebSocketRouteIntegrationConfig;
+  public abstract bind(options: WebSocketRouteIntegrationBindOptions): WebSocketRouteIntegrationConfig;
 }
 
 /**

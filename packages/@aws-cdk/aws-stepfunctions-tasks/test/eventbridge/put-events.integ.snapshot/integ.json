@@ -1,0 +1,11 @@
+{
+  "version": "20.0.0",
+  "testCases": {
+    "PutEvents/DefaultTest": {
+      "stacks": [
+        "aws-stepfunctions-tasks-eventbridge-put-events-integ"
+      ],
+      "assertionStack": "PutEvents/DefaultTest/DeployAssert"
+    }
+  }
+}

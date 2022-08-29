@@ -21,10 +21,34 @@ supported AWS Services. Instances of these classes should be passed to
 
 Currently supported are:
 
+- Republish a message to another MQTT topic
 - Invoke a Lambda function
 - Put objects to a S3 bucket
 - Put logs to CloudWatch Logs
+- Capture CloudWatch metrics
+- Change state for a CloudWatch alarm
+- Put records to Kinesis Data stream
 - Put records to Kinesis Data Firehose stream
+- Send messages to SQS queues
+- Publish messages on SNS topics
+- Write messages into columns of DynamoDB
+- Put messages IoT Events input
+
+## Republish a message to another MQTT topic
+
+The code snippet below creates an AWS IoT Rule that republish a message to
+another MQTT topic when it is triggered.
+
+```ts
+new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323("SELECT topic(2) as device_id, timestamp() as timestamp, temperature FROM 'device/+/data'"),
+  actions: [
+    new actions.IotRepublishMqttAction('${topic()}/republish', {
+      qualityOfService: actions.MqttQualityOfService.AT_LEAST_ONCE, // optional property, default is MqttQualityOfService.ZERO_OR_MORE_TIMES
+    }),
+  ],
+});
+```
 
 ## Invoke a Lambda function
 
@@ -32,10 +56,6 @@ The code snippet below creates an AWS IoT Rule that invoke a Lambda function
 when it is triggered.
 
 ```ts
-import * as iot from '@aws-cdk/aws-iot';
-import * as actions from '@aws-cdk/aws-iot-actions';
-import * as lambda from '@aws-cdk/aws-lambda';
-
 const func = new lambda.Function(this, 'MyFunction', {
   runtime: lambda.Runtime.NODEJS_14_X,
   handler: 'index.handler',
@@ -54,14 +74,10 @@ new iot.TopicRule(this, 'TopicRule', {
 
 ## Put objects to a S3 bucket
 
-The code snippet below creates an AWS IoT Rule that put objects to a S3 bucket
+The code snippet below creates an AWS IoT Rule that puts objects to a S3 bucket
 when it is triggered.
 
 ```ts
-import * as iot from '@aws-cdk/aws-iot';
-import * as actions from '@aws-cdk/aws-iot-actions';
-import * as s3 from '@aws-cdk/aws-s3';
-
 const bucket = new s3.Bucket(this, 'MyBucket');
 
 new iot.TopicRule(this, 'TopicRule', {
@@ -80,6 +96,8 @@ by the number of the current timestamp in milliseconds as `1636289461203`. So if
 You can also set specific `key` as following:
 
 ```ts
+const bucket = new s3.Bucket(this, 'MyBucket');
+
 new iot.TopicRule(this, 'TopicRule', {
   sql: iot.IotSql.fromStringAsVer20160323(
     "SELECT topic(2) as device_id, year, month, day FROM 'device/+/data'",
@@ -95,6 +113,8 @@ new iot.TopicRule(this, 'TopicRule', {
 If you wanna set access control to the S3 bucket object, you can specify `accessControl` as following:
 
 ```ts
+const bucket = new s3.Bucket(this, 'MyBucket');
+
 new iot.TopicRule(this, 'TopicRule', {
   sql: iot.IotSql.fromStringAsVer20160323("SELECT * FROM 'device/+/data'"),
   actions: [
@@ -107,12 +127,10 @@ new iot.TopicRule(this, 'TopicRule', {
 
 ## Put logs to CloudWatch Logs
 
-The code snippet below creates an AWS IoT Rule that put logs to CloudWatch Logs
+The code snippet below creates an AWS IoT Rule that puts logs to CloudWatch Logs
 when it is triggered.
 
 ```ts
-import * as iot from '@aws-cdk/aws-iot';
-import * as actions from '@aws-cdk/aws-iot-actions';
 import * as logs from '@aws-cdk/aws-logs';
 
 const logGroup = new logs.LogGroup(this, 'MyLogGroup');
@@ -123,16 +141,84 @@ new iot.TopicRule(this, 'TopicRule', {
 });
 ```
 
+## Capture CloudWatch metrics
+
+The code snippet below creates an AWS IoT Rule that capture CloudWatch metrics
+when it is triggered.
+
+```ts
+const topicRule = new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323(
+    "SELECT topic(2) as device_id, namespace, unit, value, timestamp FROM 'device/+/data'",
+  ),
+  actions: [
+    new actions.CloudWatchPutMetricAction({
+      metricName: '${topic(2)}',
+      metricNamespace: '${namespace}',
+      metricUnit: '${unit}',
+      metricValue: '${value}',
+      metricTimestamp: '${timestamp}',
+    }),
+  ],
+});
+```
+
+## Change the state of an Amazon CloudWatch alarm
+
+The code snippet below creates an AWS IoT Rule that changes the state of an Amazon CloudWatch alarm when it is triggered:
+
+```ts
+import * as cloudwatch from '@aws-cdk/aws-cloudwatch';
+
+const metric = new cloudwatch.Metric({
+  namespace: 'MyNamespace',
+  metricName: 'MyMetric',
+  dimensions: { MyDimension: 'MyDimensionValue' },
+});
+const alarm = new cloudwatch.Alarm(this, 'MyAlarm', {
+  metric: metric,
+  threshold: 100,
+  evaluationPeriods: 3,
+  datapointsToAlarm: 2,
+});
+
+const topicRule = new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323("SELECT topic(2) as device_id FROM 'device/+/data'"),
+  actions: [
+    new actions.CloudWatchSetAlarmStateAction(alarm, {
+      reason: 'AWS Iot Rule action is triggered',
+      alarmStateToSet: cloudwatch.AlarmState.ALARM,
+    }),
+  ],
+});
+```
+
+## Put records to Kinesis Data stream
+
+The code snippet below creates an AWS IoT Rule that puts records to Kinesis Data
+stream when it is triggered.
+
+```ts
+import * as kinesis from '@aws-cdk/aws-kinesis';
+
+const stream = new kinesis.Stream(this, 'MyStream');
+
+const topicRule = new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323("SELECT * FROM 'device/+/data'"),
+  actions: [
+    new actions.KinesisPutRecordAction(stream, {
+      partitionKey: '${newuuid()}',
+    }),
+  ],
+});
+```
 
 ## Put records to Kinesis Data Firehose stream
 
-The code snippet below creates an AWS IoT Rule that put records to Put records
+The code snippet below creates an AWS IoT Rule that puts records to Put records
 to Kinesis Data Firehose stream when it is triggered.
 
 ```ts
-import * as iot from '@aws-cdk/aws-iot';
-import * as actions from '@aws-cdk/aws-iot-actions';
-import * as s3 from '@aws-cdk/aws-s3';
 import * as firehose from '@aws-cdk/aws-kinesisfirehose';
 import * as destinations from '@aws-cdk/aws-kinesisfirehose-destinations';
 
@@ -144,9 +230,100 @@ const stream = new firehose.DeliveryStream(this, 'MyStream', {
 const topicRule = new iot.TopicRule(this, 'TopicRule', {
   sql: iot.IotSql.fromStringAsVer20160323("SELECT * FROM 'device/+/data'"),
   actions: [
-    new actions.FirehoseStreamAction(stream, {
+    new actions.FirehosePutRecordAction(stream, {
       batchMode: true,
-      recordSeparator: actions.FirehoseStreamRecordSeparator.NEWLINE,
+      recordSeparator: actions.FirehoseRecordSeparator.NEWLINE,
+    }),
+  ],
+});
+```
+
+## Send messages to an SQS queue
+
+The code snippet below creates an AWS IoT Rule that send messages
+to an SQS queue when it is triggered:
+
+```ts
+import * as sqs from '@aws-cdk/aws-sqs';
+
+const queue = new sqs.Queue(this, 'MyQueue');
+
+const topicRule = new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323(
+    "SELECT topic(2) as device_id, year, month, day FROM 'device/+/data'",
+  ),
+  actions: [
+    new actions.SqsQueueAction(queue, {
+      useBase64: true, // optional property, default is 'false'
+    }),
+  ],
+});
+```
+
+## Publish messages on an SNS topic
+
+The code snippet below creates and AWS IoT Rule that publishes messages to an SNS topic when it is triggered:
+
+```ts
+import * as sns from '@aws-cdk/aws-sns';
+
+const topic = new sns.Topic(this, 'MyTopic');
+
+const topicRule = new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323(
+    "SELECT topic(2) as device_id, year, month, day FROM 'device/+/data'",
+  ),
+  actions: [
+    new actions.SnsTopicAction(topic, {
+      messageFormat: actions.SnsActionMessageFormat.JSON, // optional property, default is SnsActionMessageFormat.RAW
+    }),
+  ],
+});
+```
+
+## Write attributes of a message to DynamoDB
+
+The code snippet below creates an AWS IoT rule that writes all or part of an 
+MQTT message to DynamoDB using the DynamoDBv2 action.
+
+```ts
+import * as dynamodb from '@aws-cdk/aws-dynamodb';
+
+declare const table: dynamodb.Table;
+
+const topicRule = new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323(
+    "SELECT * FROM 'device/+/data'",
+  ),
+  actions: [
+    new actions.DynamoDBv2PutItemAction(table)
+  ],
+});
+```
+
+## Put messages IoT Events input
+
+The code snippet below creates an AWS IoT Rule that puts messages
+to an IoT Events input when it is triggered:
+
+```ts
+import * as iotevents from '@aws-cdk/aws-iotevents';
+import * as iam from '@aws-cdk/aws-iam';
+
+declare const role: iam.IRole;
+
+const input = new iotevents.Input(this, 'MyInput', {
+  attributeJsonPaths: ['payload.temperature', 'payload.transactionId'],
+});
+const topicRule = new iot.TopicRule(this, 'TopicRule', {
+  sql: iot.IotSql.fromStringAsVer20160323(
+    "SELECT * FROM 'device/+/data'",
+  ),
+  actions: [
+    new actions.IotEventsPutMessageAction(input, {
+      batchMode: true, // optional property, default is 'false'
+      messageId: '${payload.transactionId}', // optional property, default is a new UUID
+      role: role, // optional property, default is a new UUID
     }),
   ],
 });

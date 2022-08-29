@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { cdkCredentialsConfig, obtainEcrCredentials } from './docker-credentials';
 import { Logger, shell, ShellOptions } from './shell';
+import { createCriticalSection } from './util';
 
 interface BuildOptions {
   readonly directory: string;
@@ -14,6 +15,8 @@ interface BuildOptions {
   readonly target?: string;
   readonly file?: string;
   readonly buildArgs?: Record<string, string>;
+  readonly networkMode?: string;
+  readonly platform?: string;
 }
 
 export interface DockerCredentialsConfig {
@@ -53,6 +56,8 @@ export class Docker {
       '--tag', options.tag,
       ...options.target ? ['--target', options.target] : [],
       ...options.file ? ['--file', options.file] : [],
+      ...options.networkMode ? ['--network', options.networkMode] : [],
+      ...options.platform ? ['--platform', options.platform] : [],
       '.',
     ];
     await this.execute(buildCommand, { cwd: options.directory });
@@ -124,14 +129,82 @@ export class Docker {
   private async execute(args: string[], options: ShellOptions = {}) {
     const configArgs = this.configDir ? ['--config', this.configDir] : [];
 
+    const pathToCdkAssets = path.resolve(__dirname, '..', '..', 'bin');
     try {
-      await shell(['docker', ...configArgs, ...args], { logger: this.logger, ...options });
+      await shell(['docker', ...configArgs, ...args], {
+        logger: this.logger,
+        ...options,
+        env: {
+          ...process.env,
+          ...options.env,
+          PATH: `${pathToCdkAssets}${path.delimiter}${options.env?.PATH ?? process.env.PATH}`,
+        },
+      });
     } catch (e) {
       if (e.code === 'ENOENT') {
         throw new Error('Unable to execute \'docker\' in order to build a container asset. Please install \'docker\' and try again.');
       }
       throw e;
     }
+  }
+}
+
+export interface DockerFactoryOptions {
+  readonly repoUri: string;
+  readonly ecr: AWS.ECR;
+  readonly logger: (m: string) => void;
+}
+
+/**
+ * Helps get appropriately configured Docker instances during the container
+ * image publishing process.
+ */
+export class DockerFactory {
+  private enterLoggedInDestinationsCriticalSection = createCriticalSection();
+  private loggedInDestinations = new Set<string>();
+
+  /**
+   * Gets a Docker instance for building images.
+   */
+  public async forBuild(options: DockerFactoryOptions): Promise<Docker> {
+    const docker = new Docker(options.logger);
+
+    // Default behavior is to login before build so that the Dockerfile can reference images in the ECR repo
+    // However, if we're in a pipelines environment (for example),
+    // we may have alternative credentials to the default ones to use for the build itself.
+    // If the special config file is present, delay the login to the default credentials until the push.
+    // If the config file is present, we will configure and use those credentials for the build.
+    let cdkDockerCredentialsConfigured = docker.configureCdkCredentials();
+    if (!cdkDockerCredentialsConfigured) {
+      await this.loginOncePerDestination(docker, options);
+    }
+
+    return docker;
+  }
+
+  /**
+   * Gets a Docker instance for pushing images to ECR.
+   */
+  public async forEcrPush(options: DockerFactoryOptions) {
+    const docker = new Docker(options.logger);
+    await this.loginOncePerDestination(docker, options);
+    return docker;
+  }
+
+  private async loginOncePerDestination(docker: Docker, options: DockerFactoryOptions) {
+    // Changes: 012345678910.dkr.ecr.us-west-2.amazonaws.com/tagging-test
+    // To this: 012345678910.dkr.ecr.us-west-2.amazonaws.com
+    const repositoryDomain = options.repoUri.split('/')[0];
+
+    // Ensure one-at-a-time access to loggedInDestinations.
+    await this.enterLoggedInDestinationsCriticalSection(async () => {
+      if (this.loggedInDestinations.has(repositoryDomain)) {
+        return;
+      }
+
+      await docker.login(options.ecr);
+      this.loggedInDestinations.add(repositoryDomain);
+    });
   }
 }
 

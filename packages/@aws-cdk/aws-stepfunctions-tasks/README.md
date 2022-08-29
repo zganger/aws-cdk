@@ -15,7 +15,10 @@ You build applications from individual components that each perform a discrete
 function, or task, allowing you to scale and change applications quickly.
 
 A [Task](https://docs.aws.amazon.com/step-functions/latest/dg/amazon-states-language-task-state.html) state represents a single unit of work performed by a state machine.
-All work in your state machine is performed by tasks.
+All work in your state machine is performed by tasks.  This module contains a collection of classes that allow you to call various AWS services
+from your Step Functions state machine.
+
+Be sure to familiarize yourself with the [`aws-stepfunctions` module documentation](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_stepfunctions-readme.html) first.
 
 This module is part of the [AWS Cloud Development Kit](https://github.com/aws/aws-cdk) project.
 
@@ -23,12 +26,6 @@ This module is part of the [AWS Cloud Development Kit](https://github.com/aws/aw
 
 - [Tasks for AWS Step Functions](#tasks-for-aws-step-functions)
   - [Table Of Contents](#table-of-contents)
-  - [Task](#task)
-  - [Paths](#paths)
-    - [InputPath](#inputpath)
-    - [OutputPath](#outputpath)
-    - [ResultPath](#resultpath)
-  - [Task parameters from the state JSON](#task-parameters-from-the-state-json)
   - [Evaluate Expression](#evaluate-expression)
   - [API Gateway](#api-gateway)
     - [Call REST API Endpoint](#call-rest-api-endpoint)
@@ -60,6 +57,10 @@ This module is part of the [AWS Cloud Development Kit](https://github.com/aws/aw
     - [Cancel Step](#cancel-step)
     - [Modify Instance Fleet](#modify-instance-fleet)
     - [Modify Instance Group](#modify-instance-group)
+  - [EMR on EKS](#emr-on-eks)
+    - [Create Virtual Cluster](#create-virtual-cluster)
+    - [Delete Virtual Cluster](#delete-virtual-cluster)
+    - [Start Job Run](#start-job-run)
   - [EKS](#eks)
     - [Call](#call)
   - [EventBridge](#eventbridge)
@@ -80,160 +81,9 @@ This module is part of the [AWS Cloud Development Kit](https://github.com/aws/aw
     - [Invoke Activity](#invoke-activity)
   - [SQS](#sqs)
 
-## Task
-
-A Task state represents a single unit of work performed by a state machine. In the
-CDK, the exact work to be done is determined by a class that implements `IStepFunctionsTask`.
-
-AWS Step Functions [integrates](https://docs.aws.amazon.com/step-functions/latest/dg/concepts-service-integrations.html) with some AWS services so that you can call API
-actions, and coordinate executions directly from the Amazon States Language in
-Step Functions. You can directly call and pass parameters to the APIs of those
-services.
-
 ## Paths
 
-In the Amazon States Language, a [path](https://docs.aws.amazon.com/step-functions/latest/dg/amazon-states-language-paths.html) is a string beginning with `$` that you
-can use to identify components within JSON text.
-
 Learn more about input and output processing in Step Functions [here](https://docs.aws.amazon.com/step-functions/latest/dg/concepts-input-output-filtering.html)
-
-### InputPath
-
-Both `InputPath` and `Parameters` fields provide a way to manipulate JSON as it
-moves through your workflow. AWS Step Functions applies the `InputPath` field first,
-and then the `Parameters` field. You can first filter your raw input to a selection
-you want using InputPath, and then apply Parameters to manipulate that input
-further, or add new values. If you don't specify an `InputPath`, a default value
-of `$` will be used.
-
-The following example provides the field named `input` as the input to the `Task`
-state that runs a Lambda function.
-
-```ts
-declare const fn: lambda.Function;
-const submitJob = new tasks.LambdaInvoke(this, 'Invoke Handler', {
-  lambdaFunction: fn,
-  inputPath: '$.input',
-});
-```
-
-### OutputPath
-
-Tasks also allow you to select a portion of the state output to pass to the next
-state. This enables you to filter out unwanted information, and pass only the
-portion of the JSON that you care about. If you don't specify an `OutputPath`,
-a default value of `$` will be used. This passes the entire JSON node to the next
-state.
-
-The [response](https://docs.aws.amazon.com/lambda/latest/dg/API_Invoke.html#API_Invoke_ResponseSyntax) from a Lambda function includes the response from the function
-as well as other metadata.
-
-The following example assigns the output from the Task to a field named `result`
-
-```ts
-declare const fn: lambda.Function;
-const submitJob = new tasks.LambdaInvoke(this, 'Invoke Handler', {
-  lambdaFunction: fn,
-  outputPath: '$.Payload.result',
-});
-```
-
-### ResultSelector
-
-You can use [`ResultSelector`](https://docs.aws.amazon.com/step-functions/latest/dg/input-output-inputpath-params.html#input-output-resultselector)
-to manipulate the raw result of a Task, Map or Parallel state before it is
-passed to [`ResultPath`](###ResultPath). For service integrations, the raw
-result contains metadata in addition to the response payload. You can use
-ResultSelector to construct a JSON payload that becomes the effective result
-using static values or references to the raw result or context object.
-
-The following example extracts the output payload of a Lambda function Task and combines
-it with some static values and the state name from the context object.
-
-```ts
-declare const fn: lambda.Function;
-new tasks.LambdaInvoke(this, 'Invoke Handler', {
-  lambdaFunction: fn,
-  resultSelector: {
-    lambdaOutput: sfn.JsonPath.stringAt('$.Payload'),
-    invokeRequestId: sfn.JsonPath.stringAt('$.SdkResponseMetadata.RequestId'),
-    staticValue: {
-      foo: 'bar',
-    },
-    stateName: sfn.JsonPath.stringAt('$$.State.Name'),
-  },
-});
-```
-
-### ResultPath
-
-The output of a state can be a copy of its input, the result it produces (for
-example, output from a Task state’s Lambda function), or a combination of its
-input and result. Use [`ResultPath`](https://docs.aws.amazon.com/step-functions/latest/dg/input-output-resultpath.html) to control which combination of these is
-passed to the state output. If you don't specify an `ResultPath`, a default
-value of `$` will be used.
-
-The following example adds the item from calling DynamoDB's `getItem` API to the state
-input and passes it to the next state.
-
-```ts
-declare const myTable: dynamodb.Table;
-new tasks.DynamoPutItem(this, 'PutItem', {
-  item: {
-    MessageId: tasks.DynamoAttributeValue.fromString('message-id'),
-  },
-  table: myTable,
-  resultPath: `$.Item`,
-});
-```
-
-⚠️ The `OutputPath` is computed after applying `ResultPath`. All service integrations
-return metadata as part of their response. When using `ResultPath`, it's not possible to
-merge a subset of the task output to the input.
-
-## Task parameters from the state JSON
-
-Most tasks take parameters. Parameter values can either be static, supplied directly
-in the workflow definition (by specifying their values), or a value available at runtime
-in the state machine's execution (either as its input or an output of a prior state).
-Parameter values available at runtime can be specified via the `JsonPath` class,
-using methods such as `JsonPath.stringAt()`.
-
-The following example provides the field named `input` as the input to the Lambda function
-and invokes it asynchronously.
-
-```ts
-declare const fn: lambda.Function;
-const submitJob = new tasks.LambdaInvoke(this, 'Invoke Handler', {
-  lambdaFunction: fn,
-  payload: sfn.TaskInput.fromJsonPathAt('$.input'),
-  invocationType: tasks.LambdaInvocationType.EVENT,
-});
-```
-
-You can also use [intrinsic functions](https://docs.aws.amazon.com/step-functions/latest/dg/amazon-states-language-intrinsic-functions.html) with `JsonPath.stringAt()`.
-Here is an example of starting an Athena query that is dynamically created using the task input:
-
-```ts
-const startQueryExecutionJob = new tasks.AthenaStartQueryExecution(this, 'Athena Start Query', {
-  queryString: sfn.JsonPath.stringAt("States.Format('select contacts where year={};', $.year)"),
-  queryExecutionContext: {
-    databaseName: 'interactions',
-  },
-  resultConfiguration: {
-    encryptionConfiguration: {
-      encryptionOption: tasks.EncryptionOption.S3_MANAGED,
-    },
-    outputLocation: {
-      bucketName: 'mybucket',
-      objectKey: 'myprefix',
-    },
-  },
-  integrationPattern: sfn.IntegrationPattern.RUN_JOB,
-});
-```
-
-Each service integration has its own set of parameters that can be supplied.
 
 ## Evaluate Expression
 
@@ -298,6 +148,25 @@ const invokeTask = new tasks.CallApiGatewayRestApiEndpoint(this, 'Call REST API'
   api: restApi,
   stageName: 'prod',
   method: tasks.HttpMethod.GET,
+});
+```
+
+Be aware that the header values must be arrays. When passing the Task Token
+in the headers field `WAIT_FOR_TASK_TOKEN` integration, use
+`JsonPath.array()` to wrap the token in an array:
+
+```ts
+import * as apigateway from '@aws-cdk/aws-apigateway';
+declare const api: apigateway.RestApi;
+
+new tasks.CallApiGatewayRestApiEndpoint(this, 'Endpoint', {
+  api,
+  stageName: 'Stage',
+  method: tasks.HttpMethod.PUT,
+  integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+  headers: sfn.TaskInput.fromObject({
+    TaskToken: sfn.JsonPath.array(sfn.JsonPath.taskToken),
+  }),
 });
 ```
 
@@ -783,6 +652,169 @@ new tasks.EmrModifyInstanceGroupByName(this, 'Task', {
 });
 ```
 
+## EMR on EKS
+
+Step Functions supports Amazon EMR on EKS through the service integration pattern.
+The service integration APIs correspond to Amazon EMR on EKS APIs, but differ in the parameters that are used.
+
+[Read more](https://docs.aws.amazon.com/step-functions/latest/dg/connect-emr-eks.html) about the differences when using these service integrations.
+
+[Setting up](https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up.html) the EKS cluster is required.
+
+### Create Virtual Cluster
+
+The [CreateVirtualCluster](https://docs.aws.amazon.com/emr-on-eks/latest/APIReference/API_CreateVirtualCluster.html) API creates a single virtual cluster that's mapped to a single Kubernetes namespace.
+
+The EKS cluster containing the Kubernetes namespace where the virtual cluster will be mapped can be passed in from the task input.
+
+```ts
+new tasks.EmrContainersCreateVirtualCluster(this, 'Create a Virtual Cluster', {
+  eksCluster: tasks.EksClusterInput.fromTaskInput(sfn.TaskInput.fromText('clusterId')),
+});
+```
+
+The EKS cluster can also be passed in directly.
+
+```ts
+import * as eks from '@aws-cdk/aws-eks';
+
+declare const eksCluster: eks.Cluster;
+
+new tasks.EmrContainersCreateVirtualCluster(this, 'Create a Virtual Cluster', {
+  eksCluster: tasks.EksClusterInput.fromCluster(eksCluster),
+});
+```
+
+By default, the Kubernetes namespace that a virtual cluster maps to is "default", but a specific namespace within an EKS cluster can be selected.
+
+```ts
+new tasks.EmrContainersCreateVirtualCluster(this, 'Create a Virtual Cluster', {
+  eksCluster: tasks.EksClusterInput.fromTaskInput(sfn.TaskInput.fromText('clusterId')),
+  eksNamespace: 'specified-namespace',
+});
+```
+
+### Delete Virtual Cluster
+
+The [DeleteVirtualCluster](https://docs.aws.amazon.com/emr-on-eks/latest/APIReference/API_DeleteVirtualCluster.html) API deletes a virtual cluster.
+
+```ts
+new tasks.EmrContainersDeleteVirtualCluster(this, 'Delete a Virtual Cluster', {
+  virtualClusterId: sfn.TaskInput.fromJsonPathAt('$.virtualCluster'),
+});
+```
+
+### Start Job Run
+
+The [StartJobRun](https://docs.aws.amazon.com/emr-on-eks/latest/APIReference/API_StartJobRun.html) API starts a job run. A job is a unit of work that you submit to Amazon EMR on EKS for execution. The work performed by the job can be defined by a Spark jar, PySpark script, or SparkSQL query. A job run is an execution of the job on the virtual cluster.
+
+Required setup:
+
+ - If not done already, follow the [steps](https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up.html) to setup EMR on EKS and [create an EKS Cluster](https://docs.aws.amazon.com/cdk/api/latest/docs/aws-eks-readme.html#quick-start).
+ - Enable [Cluster access](https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up-cluster-access.html)
+ - Enable [IAM Role access](https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up-enable-IAM.html)
+
+The following actions must be performed if the virtual cluster ID is supplied from the task input. Otherwise, if it is supplied statically in the state machine definition, these actions will be done automatically.
+
+ - Create an [IAM role](https://docs.aws.amazon.com/cdk/api/latest/docs/@aws-cdk_aws-iam.Role.html)
+ - Update the [Role Trust Policy](https://docs.aws.amazon.com/emr/latest/EMR-on-EKS-DevelopmentGuide/setting-up-trust-policy.html) of the Job Execution Role.
+
+The job can be configured with spark submit parameters:
+
+```ts
+new tasks.EmrContainersStartJobRun(this, 'EMR Containers Start Job Run', {
+  virtualCluster: tasks.VirtualClusterInput.fromVirtualClusterId('de92jdei2910fwedz'),
+  releaseLabel: tasks.ReleaseLabel.EMR_6_2_0,
+  jobDriver: {
+    sparkSubmitJobDriver: {
+      entryPoint: sfn.TaskInput.fromText('local:///usr/lib/spark/examples/src/main/python/pi.py'),
+      sparkSubmitParameters: '--conf spark.executor.instances=2 --conf spark.executor.memory=2G --conf spark.executor.cores=2 --conf spark.driver.cores=1',
+    },
+  },
+});
+```
+
+Configuring the job can also be done via application configuration:
+
+```ts
+new tasks.EmrContainersStartJobRun(this, 'EMR Containers Start Job Run', {
+  virtualCluster: tasks.VirtualClusterInput.fromVirtualClusterId('de92jdei2910fwedz'),
+  releaseLabel: tasks.ReleaseLabel.EMR_6_2_0,
+  jobName: 'EMR-Containers-Job',
+  jobDriver: {
+    sparkSubmitJobDriver: {
+      entryPoint: sfn.TaskInput.fromText('local:///usr/lib/spark/examples/src/main/python/pi.py'),
+    },
+  },
+  applicationConfig: [{
+    classification: tasks.Classification.SPARK_DEFAULTS,
+    properties: {
+      'spark.executor.instances': '1',
+      'spark.executor.memory': '512M',
+    },
+  }],
+});
+```
+
+Job monitoring can be enabled if `monitoring.logging` is set true. This automatically generates an S3 bucket and CloudWatch logs.
+
+```ts
+new tasks.EmrContainersStartJobRun(this, 'EMR Containers Start Job Run', {
+  virtualCluster: tasks.VirtualClusterInput.fromVirtualClusterId('de92jdei2910fwedz'),
+  releaseLabel: tasks.ReleaseLabel.EMR_6_2_0,
+  jobDriver: {
+    sparkSubmitJobDriver: {
+      entryPoint: sfn.TaskInput.fromText('local:///usr/lib/spark/examples/src/main/python/pi.py'),
+      sparkSubmitParameters: '--conf spark.executor.instances=2 --conf spark.executor.memory=2G --conf spark.executor.cores=2 --conf spark.driver.cores=1',
+    },
+  },
+  monitoring: {
+    logging: true,
+  },
+});
+```
+
+Otherwise, providing monitoring for jobs with existing log groups and log buckets is also available.
+
+```ts
+import * as logs from '@aws-cdk/aws-logs';
+
+const logGroup = new logs.LogGroup(this, 'Log Group');
+const logBucket = new s3.Bucket(this, 'S3 Bucket')
+
+new tasks.EmrContainersStartJobRun(this, 'EMR Containers Start Job Run', {
+  virtualCluster: tasks.VirtualClusterInput.fromVirtualClusterId('de92jdei2910fwedz'),
+  releaseLabel: tasks.ReleaseLabel.EMR_6_2_0,
+  jobDriver: {
+    sparkSubmitJobDriver: {
+      entryPoint: sfn.TaskInput.fromText('local:///usr/lib/spark/examples/src/main/python/pi.py'),
+      sparkSubmitParameters: '--conf spark.executor.instances=2 --conf spark.executor.memory=2G --conf spark.executor.cores=2 --conf spark.driver.cores=1',
+    },
+  },
+  monitoring: {
+    logGroup: logGroup,
+    logBucket: logBucket,
+  },
+});
+```
+
+Users can provide their own existing Job Execution Role.
+
+```ts
+new tasks.EmrContainersStartJobRun(this, 'EMR Containers Start Job Run', {
+  virtualCluster:tasks.VirtualClusterInput.fromTaskInput(sfn.TaskInput.fromJsonPathAt('$.VirtualClusterId')),
+  releaseLabel: tasks.ReleaseLabel.EMR_6_2_0,
+  jobName: 'EMR-Containers-Job',
+  executionRole: iam.Role.fromRoleArn(this, 'Job-Execution-Role', 'arn:aws:iam::xxxxxxxxxxxx:role/JobExecutionRole'),
+  jobDriver: {
+    sparkSubmitJobDriver: {
+      entryPoint: sfn.TaskInput.fromText('local:///usr/lib/spark/examples/src/main/python/pi.py'),
+      sparkSubmitParameters: '--conf spark.executor.instances=2 --conf spark.executor.memory=2G --conf spark.executor.cores=2 --conf spark.driver.cores=1',
+    },
+  },
+});
+```
+
 ## EKS
 
 Step Functions supports Amazon EKS through the service integration pattern.
@@ -979,6 +1011,8 @@ Step Functions supports [AWS SageMaker](https://docs.aws.amazon.com/step-functio
 If your training job or model uses resources from AWS Marketplace,
 [network isolation is required](https://docs.aws.amazon.com/sagemaker/latest/dg/mkt-algo-model-internet-free.html).
 To do so, set the `enableNetworkIsolation` property to `true` for `SageMakerCreateModel` or `SageMakerCreateTrainingJob`.
+
+To set environment variables for the Docker container use the `environment` property.
 
 ### Create Training Job
 
@@ -1212,6 +1246,25 @@ const submitJobActivity = new sfn.Activity(this, 'SubmitJob');
 
 new tasks.StepFunctionsInvokeActivity(this, 'Submit Job', {
   activity: submitJobActivity,
+});
+```
+
+Use the [Parameters](https://docs.aws.amazon.com/step-functions/latest/dg/input-output-inputpath-params.html#input-output-parameters) field to create a collection of key-value pairs that are passed as input.
+The values of each can either be static values that you include in your state machine definition, or selected from either the input or the context object with a path.
+
+```ts
+const submitJobActivity = new sfn.Activity(this, 'SubmitJob');
+
+new tasks.StepFunctionsInvokeActivity(this, 'Submit Job', {
+  activity: submitJobActivity,
+  parameters: {
+    comment: 'Selecting what I care about.',
+    MyDetails: {
+      size: sfn.JsonPath.stringAt('$.product.details.size'),
+      exists: sfn.JsonPath.stringAt('$.product.availability'),
+      StaticValue: 'foo'
+    },
+  },
 });
 ```
 

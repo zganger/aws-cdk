@@ -1,9 +1,12 @@
-import { ABSENT } from '@aws-cdk/assert-internal';
-import '@aws-cdk/assert-internal/jest';
+import { Match, Template } from '@aws-cdk/assertions';
+import { AutoScalingGroup } from '@aws-cdk/aws-autoscaling';
 import * as autoscaling from '@aws-cdk/aws-autoscaling';
+import { MachineImage } from '@aws-cdk/aws-ec2';
 import * as ec2 from '@aws-cdk/aws-ec2';
+import { AsgCapacityProvider } from '@aws-cdk/aws-ecs';
 import * as ecs from '@aws-cdk/aws-ecs';
 import * as sqs from '@aws-cdk/aws-sqs';
+import { testDeprecated, testLegacyBehavior } from '@aws-cdk/cdk-build-tools';
 import * as cdk from '@aws-cdk/core';
 import * as cxapi from '@aws-cdk/cx-api';
 import * as ecsPatterns from '../../lib';
@@ -13,7 +16,13 @@ test('test ECS queue worker service construct - with only required props', () =>
   const stack = new cdk.Stack();
   const vpc = new ec2.Vpc(stack, 'VPC');
   const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('DefaultAutoScalingGroup', { instanceType: new ec2.InstanceType('t2.micro') });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
 
   // WHEN
   new ecsPatterns.QueueProcessingEc2Service(stack, 'Service', {
@@ -23,12 +32,11 @@ test('test ECS queue worker service construct - with only required props', () =>
   });
 
   // THEN - QueueWorker is of EC2 launch type, an SQS queue is created and all default properties are set.
-  expect(stack).toHaveResource('AWS::ECS::Service', {
-    DesiredCount: 1,
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
     LaunchType: 'EC2',
   });
 
-  expect(stack).toHaveResource('AWS::SQS::Queue', {
+  Template.fromStack(stack).hasResourceProperties('AWS::SQS::Queue', {
     RedrivePolicy: {
       deadLetterTargetArn: {
         'Fn::GetAtt': [
@@ -40,13 +48,13 @@ test('test ECS queue worker service construct - with only required props', () =>
     },
   });
 
-  expect(stack).toHaveResource('AWS::SQS::Queue', {
+  Template.fromStack(stack).hasResourceProperties('AWS::SQS::Queue', {
     MessageRetentionPeriod: 1209600,
   });
 
-  expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
     ContainerDefinitions: [
-      {
+      Match.objectLike({
         Environment: [
           {
             Name: 'QUEUE_NAME',
@@ -73,20 +81,26 @@ test('test ECS queue worker service construct - with only required props', () =>
         Essential: true,
         Image: 'test',
         Memory: 512,
-      },
+      }),
     ],
     Family: 'ServiceQueueProcessingTaskDef83DB34F1',
   });
 });
 
-test('test ECS queue worker service construct - with remove default desiredCount feature flag', () => {
+testLegacyBehavior('test ECS queue worker service construct - with remove default desiredCount feature flag', cdk.App, (app) => {
   // GIVEN
-  const stack = new cdk.Stack();
+  const stack = new cdk.Stack(app);
   stack.node.setContext(cxapi.ECS_REMOVE_DEFAULT_DESIRED_COUNT, true);
 
   const vpc = new ec2.Vpc(stack, 'VPC');
   const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('DefaultAutoScalingGroup', { instanceType: new ec2.InstanceType('t2.micro') });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
 
   // WHEN
   new ecsPatterns.QueueProcessingEc2Service(stack, 'Service', {
@@ -96,8 +110,8 @@ test('test ECS queue worker service construct - with remove default desiredCount
   });
 
   // THEN - QueueWorker is of EC2 launch type, and desiredCount is not defined on the Ec2Service.
-  expect(stack).toHaveResource('AWS::ECS::Service', {
-    DesiredCount: ABSENT,
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
+    DesiredCount: Match.absent(),
     LaunchType: 'EC2',
   });
 });
@@ -107,7 +121,13 @@ test('test ECS queue worker service construct - with optional props for queues',
   const stack = new cdk.Stack();
   const vpc = new ec2.Vpc(stack, 'VPC');
   const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('DefaultAutoScalingGroup', { instanceType: new ec2.InstanceType('t2.micro') });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
 
   // WHEN
   new ecsPatterns.QueueProcessingEc2Service(stack, 'Service', {
@@ -120,12 +140,11 @@ test('test ECS queue worker service construct - with optional props for queues',
   });
 
   // THEN - QueueWorker is of EC2 launch type, an SQS queue is created and all default properties are set.
-  expect(stack).toHaveResource('AWS::ECS::Service', {
-    DesiredCount: 1,
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
     LaunchType: 'EC2',
   });
 
-  expect(stack).toHaveResource('AWS::SQS::Queue', {
+  Template.fromStack(stack).hasResourceProperties('AWS::SQS::Queue', {
     RedrivePolicy: {
       deadLetterTargetArn: {
         'Fn::GetAtt': [
@@ -138,13 +157,13 @@ test('test ECS queue worker service construct - with optional props for queues',
     VisibilityTimeout: 300,
   });
 
-  expect(stack).toHaveResource('AWS::SQS::Queue', {
+  Template.fromStack(stack).hasResourceProperties('AWS::SQS::Queue', {
     MessageRetentionPeriod: 604800,
   });
 
-  expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
     ContainerDefinitions: [
-      {
+      Match.objectLike({
         Environment: [
           {
             Name: 'QUEUE_NAME',
@@ -171,18 +190,107 @@ test('test ECS queue worker service construct - with optional props for queues',
         Essential: true,
         Image: 'test',
         Memory: 512,
-      },
+      }),
     ],
     Family: 'ServiceQueueProcessingTaskDef83DB34F1',
   });
 });
 
-test('test ECS queue worker service construct - with optional props', () => {
+test('test ECS queue worker service construct - with ECS Exec', () => {
   // GIVEN
   const stack = new cdk.Stack();
   const vpc = new ec2.Vpc(stack, 'VPC');
   const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('DefaultAutoScalingGroup', { instanceType: new ec2.InstanceType('t2.micro') });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
+
+  // WHEN
+  new ecsPatterns.QueueProcessingFargateService(stack, 'Service', {
+    cluster,
+    memoryLimitMiB: 512,
+    image: ecs.ContainerImage.fromRegistry('test'),
+    enableExecuteCommand: true,
+  });
+
+
+  // THEN
+  // ECS Exec
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
+    EnableExecuteCommand: true,
+  });
+
+  Template.fromStack(stack).hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: [
+        {
+          Action: [
+            'ssmmessages:CreateControlChannel',
+            'ssmmessages:CreateDataChannel',
+            'ssmmessages:OpenControlChannel',
+            'ssmmessages:OpenDataChannel',
+          ],
+          Effect: 'Allow',
+          Resource: '*',
+        },
+        {
+          Action: 'logs:DescribeLogGroups',
+          Effect: 'Allow',
+          Resource: '*',
+        },
+        {
+          Action: [
+            'logs:CreateLogStream',
+            'logs:DescribeLogStreams',
+            'logs:PutLogEvents',
+          ],
+          Effect: 'Allow',
+          Resource: '*',
+        },
+        {
+          Action: [
+            'sqs:ReceiveMessage',
+            'sqs:ChangeMessageVisibility',
+            'sqs:GetQueueUrl',
+            'sqs:DeleteMessage',
+            'sqs:GetQueueAttributes',
+          ],
+          Effect: 'Allow',
+          Resource: {
+            'Fn::GetAtt': [
+              'ServiceEcsProcessingQueueC266885C',
+              'Arn',
+            ],
+          },
+        },
+      ],
+      Version: '2012-10-17',
+    },
+    PolicyName: 'ServiceQueueProcessingTaskDefTaskRoleDefaultPolicy11D50174',
+    Roles: [
+      {
+        Ref: 'ServiceQueueProcessingTaskDefTaskRoleBDE5D3C6',
+      },
+    ],
+  });
+});
+
+testDeprecated('test ECS queue worker service construct - with optional props', () => {
+  // GIVEN
+  const stack = new cdk.Stack();
+  const vpc = new ec2.Vpc(stack, 'VPC');
+  const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
   const queue = new sqs.Queue(stack, 'ecs-test-queue', {
     queueName: 'ecs-test-sqs-queue',
   });
@@ -194,7 +302,6 @@ test('test ECS queue worker service construct - with optional props', () => {
     image: ecs.ContainerImage.fromRegistry('test'),
     command: ['-c', '4', 'amazon.com'],
     enableLogging: false,
-    desiredTaskCount: 2,
     environment: {
       TEST_ENVIRONMENT_VARIABLE1: 'test environment variable 1 value',
       TEST_ENVIRONMENT_VARIABLE2: 'test environment variable 2 value',
@@ -207,11 +314,12 @@ test('test ECS queue worker service construct - with optional props', () => {
     family: 'ecs-task-family',
     circuitBreaker: { rollback: true },
     gpuCount: 256,
+    placementStrategies: [ecs.PlacementStrategy.spreadAcrossInstances(), ecs.PlacementStrategy.packedByCpu(), ecs.PlacementStrategy.randomly()],
+    placementConstraints: [ecs.PlacementConstraint.memberOf('attribute:ecs.instance-type =~ m5a.*')],
   });
 
   // THEN - QueueWorker is of EC2 launch type, an SQS queue is created and all optional properties are set.
-  expect(stack).toHaveResource('AWS::ECS::Service', {
-    DesiredCount: 2,
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
     DeploymentConfiguration: {
       MinimumHealthyPercent: 60,
       MaximumPercent: 150,
@@ -225,15 +333,17 @@ test('test ECS queue worker service construct - with optional props', () => {
     DeploymentController: {
       Type: 'ECS',
     },
+    PlacementConstraints: [{ Type: 'memberOf', Expression: 'attribute:ecs.instance-type =~ m5a.*' }],
+    PlacementStrategies: [{ Field: 'instanceId', Type: 'spread' }, { Field: 'CPU', Type: 'binpack' }, { Type: 'random' }],
   });
 
-  expect(stack).toHaveResource('AWS::SQS::Queue', {
+  Template.fromStack(stack).hasResourceProperties('AWS::SQS::Queue', {
     QueueName: 'ecs-test-sqs-queue',
   });
 
-  expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
     ContainerDefinitions: [
-      {
+      Match.objectLike({
         Command: [
           '-c',
           '4',
@@ -266,18 +376,24 @@ test('test ECS queue worker service construct - with optional props', () => {
             Value: '256',
           },
         ],
-      },
+      }),
     ],
     Family: 'ecs-task-family',
   });
 });
 
-test('can set desiredTaskCount to 0', () => {
+testLegacyBehavior('can set desiredTaskCount to 0', cdk.App, (app) => {
   // GIVEN
-  const stack = new cdk.Stack();
+  const stack = new cdk.Stack(app);
   const vpc = new ec2.Vpc(stack, 'VPC');
   const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('DefaultAutoScalingGroup', { instanceType: new ec2.InstanceType('t2.micro') });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
 
   // WHEN
   new ecsPatterns.QueueProcessingEc2Service(stack, 'Service', {
@@ -289,18 +405,24 @@ test('can set desiredTaskCount to 0', () => {
   });
 
   // THEN - QueueWorker is of EC2 launch type, an SQS queue is created and all default properties are set.
-  expect(stack).toHaveResource('AWS::ECS::Service', {
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
     DesiredCount: 0,
     LaunchType: 'EC2',
   });
 });
 
-test('throws if desiredTaskCount and maxScalingCapacity are 0', () => {
+testDeprecated('throws if desiredTaskCount and maxScalingCapacity are 0', () => {
   // GIVEN
   const stack = new cdk.Stack();
   const vpc = new ec2.Vpc(stack, 'VPC');
   const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('DefaultAutoScalingGroup', { instanceType: new ec2.InstanceType('t2.micro') });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
 
   // THEN
   expect(() =>
@@ -318,7 +440,13 @@ test('can set custom containerName', () => {
   const stack = new cdk.Stack();
   const vpc = new ec2.Vpc(stack, 'VPC');
   const cluster = new ecs.Cluster(stack, 'Cluster', { vpc });
-  cluster.addCapacity('DefaultAutoScalingGroup', { instanceType: new ec2.InstanceType('t2.micro') });
+  cluster.addAsgCapacityProvider(new AsgCapacityProvider(stack, 'DefaultAutoScalingGroupProvider', {
+    autoScalingGroup: new AutoScalingGroup(stack, 'DefaultAutoScalingGroup', {
+      vpc,
+      instanceType: new ec2.InstanceType('t2.micro'),
+      machineImage: MachineImage.latestAmazonLinux(),
+    }),
+  }));
 
   // WHEN
   new ecsPatterns.QueueProcessingEc2Service(stack, 'Service', {
@@ -329,11 +457,11 @@ test('can set custom containerName', () => {
   });
 
   // THEN
-  expect(stack).toHaveResourceLike('AWS::ECS::TaskDefinition', {
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::TaskDefinition', {
     ContainerDefinitions: [
-      {
+      Match.objectLike({
         Name: 'my-container',
-      },
+      }),
     ],
   });
 });
@@ -366,8 +494,8 @@ test('can set capacity provider strategies', () => {
   });
 
   // THEN
-  expect(stack).toHaveResource('AWS::ECS::Service', {
-    LaunchType: ABSENT,
+  Template.fromStack(stack).hasResourceProperties('AWS::ECS::Service', {
+    LaunchType: Match.absent(),
     CapacityProviderStrategy: [
       {
         CapacityProvider: {

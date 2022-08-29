@@ -1,3 +1,4 @@
+import { Construct } from 'constructs';
 import { CfnGatewayRoute } from './appmesh.generated';
 import { HeaderMatch } from './header-match';
 import { HttpRouteMethod } from './http-route-method';
@@ -6,10 +7,6 @@ import { validateGrpcMatchArrayLength, validateGrpcGatewayRouteMatch } from './p
 import { QueryParameterMatch } from './query-parameter-match';
 import { Protocol } from './shared-interfaces';
 import { IVirtualService } from './virtual-service';
-
-// keep this import separate from other imports to reduce chance for merge conflicts with v2-main
-// eslint-disable-next-line no-duplicate-imports, import/order
-import { Construct } from '@aws-cdk/core';
 
 /**
  * Configuration for gateway route host name match.
@@ -149,9 +146,23 @@ export interface GrpcGatewayRouteMatch {
 }
 
 /**
+ * Base options for all gateway route specs.
+ */
+export interface CommonGatewayRouteSpecOptions {
+  /**
+   * The priority for the gateway route. When a Virtual Gateway has multiple gateway routes, gateway route match
+   * is performed in the order of specified value, where 0 is the highest priority,
+   * and first matched gateway route is selected.
+   *
+   * @default - no particular priority
+   */
+  readonly priority?: number;
+}
+
+/**
  * Properties specific for HTTP Based GatewayRoutes
  */
-export interface HttpGatewayRouteSpecOptions {
+export interface HttpGatewayRouteSpecOptions extends CommonGatewayRouteSpecOptions {
   /**
    * The criterion for determining a request match for this GatewayRoute.
    * When path match is defined, this may optionally determine the path rewrite configuration.
@@ -169,7 +180,7 @@ export interface HttpGatewayRouteSpecOptions {
 /**
  * Properties specific for a gRPC GatewayRoute
  */
-export interface GrpcGatewayRouteSpecOptions {
+export interface GrpcGatewayRouteSpecOptions extends CommonGatewayRouteSpecOptions {
   /**
    * The criterion for determining a request match for this GatewayRoute
    */
@@ -205,6 +216,15 @@ export interface GatewayRouteSpecConfig {
    * @default - no grpc spec
    */
   readonly grpcSpecConfig?: CfnGatewayRoute.GrpcGatewayRouteProperty;
+
+  /**
+   * The priority for the gateway route. When a Virtual Gateway has multiple gateway routes, gateway route match
+   * is performed in the order of specified value, where 0 is the highest priority,
+   * and first matched gateway route is selected.
+   *
+   * @default - no particular priority
+   */
+  readonly priority?: number;
 }
 
 /**
@@ -257,12 +277,14 @@ class HttpGatewayRouteSpec extends GatewayRouteSpec {
    * Type of route you are creating
    */
   readonly routeType: Protocol;
+  readonly priority?: number;
 
   constructor(options: HttpGatewayRouteSpecOptions, protocol: Protocol.HTTP | Protocol.HTTP2) {
     super();
     this.routeTarget = options.routeTarget;
     this.routeType = protocol;
     this.match = options.match;
+    this.priority = options.priority;
   }
 
   public bind(scope: Construct): GatewayRouteSpecConfig {
@@ -301,6 +323,7 @@ class HttpGatewayRouteSpec extends GatewayRouteSpec {
       },
     };
     return {
+      priority: this.priority,
       httpSpecConfig: this.routeType === Protocol.HTTP ? httpConfig : undefined,
       http2SpecConfig: this.routeType === Protocol.HTTP2 ? httpConfig : undefined,
     };
@@ -314,11 +337,13 @@ class GrpcGatewayRouteSpec extends GatewayRouteSpec {
    * The VirtualService this GatewayRoute directs traffic to
    */
   readonly routeTarget: IVirtualService;
+  readonly priority?: number;
 
   constructor(options: GrpcGatewayRouteSpecOptions) {
     super();
     this.match = options.match;
     this.routeTarget = options.routeTarget;
+    this.priority = options.priority;
   }
 
   public bind(scope: Construct): GatewayRouteSpecConfig {
@@ -349,6 +374,7 @@ class GrpcGatewayRouteSpec extends GatewayRouteSpec {
             },
         },
       },
+      priority: this.priority,
     };
   }
 }

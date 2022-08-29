@@ -2,10 +2,10 @@ import * as appscaling from '@aws-cdk/aws-applicationautoscaling';
 import * as ec2 from '@aws-cdk/aws-ec2';
 import * as elbv2 from '@aws-cdk/aws-elasticloadbalancingv2';
 import * as cloudmap from '@aws-cdk/aws-servicediscovery';
-import { Resource, Stack } from '@aws-cdk/core';
+import { ArnFormat, Resource, Stack } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { AssociateCloudMapServiceOptions, BaseService, BaseServiceOptions, CloudMapOptions, DeploymentControllerType, EcsTarget, IBaseService, IEcsLoadBalancerTarget, IService, LaunchType, PropagatedTagSource } from '../base/base-service';
-import { fromServiceAtrributes } from '../base/from-service-attributes';
+import { fromServiceAttributes } from '../base/from-service-attributes';
 import { ScalableTaskCount } from '../base/scalable-task-count';
 import { Compatibility, LoadBalancerTargetOptions, TaskDefinition } from '../base/task-definition';
 import { ICluster } from '../cluster';
@@ -73,16 +73,16 @@ export class ExternalService extends BaseService implements IExternalService {
   public static fromExternalServiceArn(scope: Construct, id: string, externalServiceArn: string): IExternalService {
     class Import extends Resource implements IExternalService {
       public readonly serviceArn = externalServiceArn;
-      public readonly serviceName = Stack.of(scope).parseArn(externalServiceArn).resourceName as string;
+      public readonly serviceName = Stack.of(scope).splitArn(externalServiceArn, ArnFormat.SLASH_RESOURCE_NAME).resourceName as string;
     }
     return new Import(scope, id);
   }
 
   /**
-   * Imports from the specified service attrributes.
+   * Imports from the specified service attributes.
    */
   public static fromExternalServiceAttributes(scope: Construct, id: string, attrs: ExternalServiceAttributes): IBaseService {
-    return fromServiceAtrributes(scope, id, attrs);
+    return fromServiceAttributes(scope, id, attrs);
   }
 
   /**

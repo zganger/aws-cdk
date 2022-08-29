@@ -1,4 +1,6 @@
-/// !cdk-integ pragma:ignore-assets
+// disabling update workflow because we don't want to include the assets in the snapshot
+// python bundling changes the asset hash pretty frequently
+/// !cdk-integ pragma:disable-update-workflow
 import * as path from 'path';
 import { Runtime } from '@aws-cdk/aws-lambda';
 import { App, CfnOutput, Stack, StackProps } from '@aws-cdk/core';
@@ -16,18 +18,10 @@ class TestStack extends Stack {
 
     const pythonFunctionInline = new lambda.PythonFunction(this, 'my_handler_inline', {
       entry: path.join(__dirname, 'lambda-handler-pipenv'),
-      runtime: Runtime.PYTHON_3_6,
+      runtime: Runtime.PYTHON_3_9,
     });
     new CfnOutput(this, 'InlineFunctionName', {
       value: pythonFunctionInline.functionName,
-    });
-
-    const pythonFunction27 = new lambda.PythonFunction(this, 'my_handler_python_27', {
-      entry: path.join(__dirname, 'lambda-handler-pipenv'),
-      runtime: Runtime.PYTHON_2_7,
-    });
-    new CfnOutput(this, 'Python27FunctionName', {
-      value: pythonFunction27.functionName,
     });
 
     const pythonFunction38 = new lambda.PythonFunction(this, 'my_handler_python_38', {

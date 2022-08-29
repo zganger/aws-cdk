@@ -1,4 +1,4 @@
-import { Match, Template } from '@aws-cdk/assertions';
+import { Match, Template, Annotations } from '@aws-cdk/assertions';
 import { Duration, Stack } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { Alarm, IAlarm, IAlarmAction, Metric, MathExpression, IMetric } from '../lib';
@@ -49,6 +49,22 @@ describe('Alarm', () => {
     }).toThrow(/EC2 alarm actions requires an EC2 Per-Instance Metric. \(.+ does not have an 'InstanceId' dimension\)/);
   });
 
+  test('non ec2 instance related alarm does not accept EC2 action in other partitions', () => {
+    const stack = new Stack();
+    const alarm = new Alarm(stack, 'Alarm', {
+      metric: testMetric,
+      threshold: 1000,
+      evaluationPeriods: 2,
+    });
+
+    expect(() => {
+      alarm.addAlarmAction(new Ec2TestAlarmAction('arn:aws-us-gov:automate:us-east-1:ec2:reboot'));
+    }).toThrow(/EC2 alarm actions requires an EC2 Per-Instance Metric. \(.+ does not have an 'InstanceId' dimension\)/);
+    expect(() => {
+      alarm.addAlarmAction(new Ec2TestAlarmAction('arn:aws-cn:automate:us-east-1:ec2:reboot'));
+    }).toThrow(/EC2 alarm actions requires an EC2 Per-Instance Metric. \(.+ does not have an 'InstanceId' dimension\)/);
+  });
+
   test('can make simple alarm', () => {
     // GIVEN
     const stack = new Stack();
@@ -78,8 +94,7 @@ describe('Alarm', () => {
 
     // WHEN
     new Alarm(stack, 'Alarm', {
-      metric: testMetric,
-      period: Duration.minutes(10),
+      metric: testMetric.with({ period: Duration.minutes(10) }),
       threshold: 1000,
       evaluationPeriods: 3,
     });
@@ -102,8 +117,7 @@ describe('Alarm', () => {
 
     // WHEN
     new Alarm(stack, 'Alarm', {
-      metric: testMetric,
-      statistic: 'max',
+      metric: testMetric.with({ statistic: 'max' }),
       threshold: 1000,
       evaluationPeriods: 3,
     });
@@ -127,8 +141,7 @@ describe('Alarm', () => {
 
     // WHEN
     new Alarm(stack, 'Alarm', {
-      metric: testMetric,
-      statistic: 'P99',
+      metric: testMetric.with({ statistic: 'P99' }),
       threshold: 1000,
       evaluationPeriods: 3,
     });
@@ -199,11 +212,12 @@ describe('Alarm', () => {
     const stack = new Stack();
 
     // WHEN
-    testMetric.createAlarm(stack, 'Alarm', {
-      threshold: 1000,
-      evaluationPeriods: 2,
+    testMetric.with({
       statistic: 'min',
       period: Duration.seconds(10),
+    }).createAlarm(stack, 'Alarm', {
+      threshold: 1000,
+      evaluationPeriods: 2,
     });
 
     // THEN
@@ -223,10 +237,11 @@ describe('Alarm', () => {
     const stack = new Stack();
 
     // WHEN
-    testMetric.createAlarm(stack, 'Alarm', {
+    testMetric.with({
+      statistic: 'p99.9',
+    }).createAlarm(stack, 'Alarm', {
       threshold: 1000,
       evaluationPeriods: 2,
-      statistic: 'p99.9',
     });
 
     // THEN
@@ -240,10 +255,11 @@ describe('Alarm', () => {
     const stack = new Stack();
 
     // WHEN
-    testMetric.createAlarm(stack, 'Alarm', {
+    testMetric.with({
+      statistic: 'tm99.9999999999',
+    }).createAlarm(stack, 'Alarm', {
       threshold: 1000,
       evaluationPeriods: 2,
-      statistic: 'tm99.9999999999',
     });
 
     // THEN
@@ -251,6 +267,22 @@ describe('Alarm', () => {
       Statistic: Match.absent(),
       ExtendedStatistic: 'tm99.9999999999',
     });
+  });
+
+  test('metric warnings are added to Alarm', () => {
+    const stack = new Stack(undefined, 'MyStack');
+    const m = new MathExpression({ expression: 'oops' });
+
+    // WHEN
+    new Alarm(stack, 'MyAlarm', {
+      metric: m,
+      evaluationPeriods: 1,
+      threshold: 1,
+    });
+
+    // THEN
+    const template = Annotations.fromStack(stack);
+    template.hasWarning('/MyStack/MyAlarm', Match.stringLikeRegexp("Math expression 'oops' references unknown identifiers"));
   });
 });
 

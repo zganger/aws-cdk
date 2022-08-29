@@ -1,10 +1,13 @@
+import { testDeprecated, testFutureBehavior, testLegacyBehavior } from '@aws-cdk/cdk-build-tools';
 import * as cxapi from '@aws-cdk/cx-api';
-import { testFutureBehavior, testLegacyBehavior } from '@aws-cdk/cdk-build-tools/lib/feature-flag';
+import { Fact, RegionInfo } from '@aws-cdk/region-info';
+import { Construct, Node } from 'constructs';
 import {
   App, CfnCondition, CfnInclude, CfnOutput, CfnParameter,
-  CfnResource, Construct, Lazy, ScopedAws, Stack, validateString,
-  ISynthesisSession, Tags, LegacyStackSynthesizer, DefaultStackSynthesizer,
+  CfnResource, Lazy, ScopedAws, Stack, validateString,
+  Tags, LegacyStackSynthesizer, DefaultStackSynthesizer,
   NestedStack,
+  Aws,
 } from '../lib';
 import { Intrinsic } from '../lib/private/intrinsic';
 import { resolveReferences } from '../lib/private/refs';
@@ -17,6 +20,19 @@ describe('stack', () => {
     expect(toCloudFormation(stack)).toEqual({ });
   });
 
+  test('stack name cannot exceed 128 characters', () => {
+    // GIVEN
+    const app = new App({});
+    const reallyLongStackName = 'LookAtMyReallyLongStackNameThisStackNameIsLongerThan128CharactersThatIsNutsIDontThinkThereIsEnoughAWSAvailableToLetEveryoneHaveStackNamesThisLong';
+
+    // THEN
+    expect(() => {
+      new Stack(app, 'MyStack', {
+        stackName: reallyLongStackName,
+      });
+    }).toThrow(`Stack name must be <= 128 characters. Stack name: '${reallyLongStackName}'`);
+  });
+
   test('stack objects have some template-level propeties, such as Description, Version, Transform', () => {
     const stack = new Stack();
     stack.templateOptions.templateFormatVersion = 'MyTemplateVersion';
@@ -27,7 +43,6 @@ describe('stack', () => {
       AWSTemplateFormatVersion: 'MyTemplateVersion',
       Transform: 'SAMy',
     });
-
   });
 
   test('Stack.isStack indicates that a construct is a stack', () => {
@@ -35,7 +50,6 @@ describe('stack', () => {
     const c = new Construct(stack, 'Construct');
     expect(Stack.isStack(stack)).toBeDefined();
     expect(!Stack.isStack(c)).toBeDefined();
-
   });
 
   test('stack.id is not included in the logical identities of resources within it', () => {
@@ -43,7 +57,6 @@ describe('stack', () => {
     new CfnResource(stack, 'MyResource', { type: 'MyResourceType' });
 
     expect(toCloudFormation(stack)).toEqual({ Resources: { MyResource: { Type: 'MyResourceType' } } });
-
   });
 
   test('when stackResourceLimit is default, should give error', () => {
@@ -60,8 +73,6 @@ describe('stack', () => {
     expect(() => {
       app.synth();
     }).toThrow('Number of resources in stack \'MyStack\': 1000 is greater than allowed maximum of 500');
-
-
   });
 
   test('when stackResourceLimit is defined, should give the proper error', () => {
@@ -82,8 +93,6 @@ describe('stack', () => {
     expect(() => {
       app.synth();
     }).toThrow('Number of resources in stack \'MyStack\': 200 is greater than allowed maximum of 100');
-
-
   });
 
   test('when stackResourceLimit is 0, should not give error', () => {
@@ -104,8 +113,6 @@ describe('stack', () => {
     expect(() => {
       app.synth();
     }).not.toThrow();
-
-
   });
 
   test('stack.templateOptions can be used to set template-level options', () => {
@@ -125,8 +132,6 @@ describe('stack', () => {
       AWSTemplateFormatVersion: 'TemplateVersion',
       Metadata: { MetadataKey: 'MetadataValue' },
     });
-
-
   });
 
   test('stack.templateOptions.transforms removes duplicate values', () => {
@@ -137,8 +142,6 @@ describe('stack', () => {
     expect(toCloudFormation(stack)).toEqual({
       Transform: ['A', 'B', 'C'],
     });
-
-
   });
 
   test('stack.addTransform() adds a transform', () => {
@@ -151,8 +154,6 @@ describe('stack', () => {
     expect(toCloudFormation(stack)).toEqual({
       Transform: ['A', 'B', 'C'],
     });
-
-
   });
 
   // This approach will only apply to TypeScript code, but at least it's a temporary
@@ -189,8 +190,6 @@ describe('stack', () => {
          },
       },
     });
-
-
   });
 
   test('Stack.getByPath can be used to find any CloudFormation element (Parameter, Output, etc)', () => {
@@ -204,8 +203,6 @@ describe('stack', () => {
     expect(stack.node.findChild(p.node.id)).toEqual(p);
     expect(stack.node.findChild(o.node.id)).toEqual(o);
     expect(stack.node.findChild(c.node.id)).toEqual(c);
-
-
   });
 
   test('Stack names can have hyphens in them', () => {
@@ -213,15 +210,12 @@ describe('stack', () => {
 
     new Stack(root, 'Hello-World');
     // Did not throw
-
-
   });
 
   test('Stacks can have a description given to them', () => {
     const stack = new Stack(new App(), 'MyStack', { description: 'My stack, hands off!' });
     const output = toCloudFormation(stack);
     expect(output.Description).toEqual('My stack, hands off!');
-
   });
 
   test('Stack descriptions have a limited length', () => {
@@ -238,10 +232,9 @@ describe('stack', () => {
      aliquam malesuada bibendum arcu vitae. Augue neque gravida in fermentum et sollicitudin ac orci phasellus.
      Ultrices tincidunt arcu non sodales neque sodales.`;
     expect(() => new Stack(new App(), 'MyStack', { description: desc }));
-
   });
 
-  test('Include should support non-hash top-level template elements like "Description"', () => {
+  testDeprecated('Include should support non-hash top-level template elements like "Description"', () => {
     const stack = new Stack();
 
     const template = {
@@ -253,12 +246,11 @@ describe('stack', () => {
     const output = toCloudFormation(stack);
 
     expect(typeof output.Description).toEqual('string');
-
   });
 
   test('Pseudo values attached to one stack can be referenced in another stack', () => {
     // GIVEN
-    const app = new App();
+    const app = new App({ context: { [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false } });
     const stack1 = new Stack(app, 'Stack1');
     const account1 = new ScopedAws(stack1).accountId;
     const stack2 = new Stack(app, 'Stack2');
@@ -288,8 +280,6 @@ describe('stack', () => {
         },
       },
     });
-
-
   });
 
   test('Cross-stack references are detected in resource properties', () => {
@@ -311,17 +301,14 @@ describe('stack', () => {
     const assembly = app.synth();
     const template2 = assembly.getStackByName(stack2.stackName).template;
 
-    expect(template2).toEqual({
-      Resources: {
-        SomeResource: {
-          Type: 'AWS::Some::Resource',
-          Properties: {
-            someProperty: { 'Fn::ImportValue': 'Stack1:ExportsOutputRefResource1D5D905A' },
-          },
+    expect(template2?.Resources).toEqual({
+      SomeResource: {
+        Type: 'AWS::Some::Resource',
+        Properties: {
+          someProperty: { 'Fn::ImportValue': 'Stack1:ExportsOutputRefResource1D5D905A' },
         },
       },
     });
-
   });
 
   test('Cross-stack export names account for stack name lengths', () => {
@@ -354,7 +341,6 @@ describe('stack', () => {
 
     const theOutput = template1.Outputs[Object.keys(template1.Outputs)[0]];
     expect(theOutput.Export.Name.length).toEqual(255);
-
   });
 
   test('Cross-stack reference export names are relative to the stack (when the flag is set)', () => {
@@ -384,22 +370,19 @@ describe('stack', () => {
     const assembly = app.synth();
     const template2 = assembly.getStackByName(stack2.stackName).template;
 
-    expect(template2).toEqual({
-      Resources: {
-        SomeResource: {
-          Type: 'AWS::Some::Resource',
-          Properties: {
-            someProperty: { 'Fn::ImportValue': 'Stack1:ExportsOutputRefResource1D5D905A' },
-          },
+    expect(template2?.Resources).toEqual({
+      SomeResource: {
+        Type: 'AWS::Some::Resource',
+        Properties: {
+          someProperty: { 'Fn::ImportValue': 'Stack1:ExportsOutputRefResource1D5D905A' },
         },
       },
     });
-
   });
 
   test('cross-stack references in lazy tokens work', () => {
     // GIVEN
-    const app = new App();
+    const app = new App({ context: { [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false } });
     const stack1 = new Stack(app, 'Stack1');
     const account1 = new ScopedAws(stack1).accountId;
     const stack2 = new Stack(app, 'Stack2');
@@ -429,8 +412,6 @@ describe('stack', () => {
         },
       },
     });
-
-
   });
 
   test('Cross-stack use of Region and account returns nonscoped intrinsic because the two stacks must be in the same region anyway', () => {
@@ -447,23 +428,19 @@ describe('stack', () => {
     const assembly = app.synth();
     const template2 = assembly.getStackByName(stack2.stackName).template;
 
-    expect(template2).toEqual({
-      Outputs: {
-        DemOutput: {
-          Value: { Ref: 'AWS::Region' },
-        },
-        DemAccount: {
-          Value: { Ref: 'AWS::AccountId' },
-        },
+    expect(template2?.Outputs).toEqual({
+      DemOutput: {
+        Value: { Ref: 'AWS::Region' },
+      },
+      DemAccount: {
+        Value: { Ref: 'AWS::AccountId' },
       },
     });
-
-
   });
 
   test('cross-stack references in strings work', () => {
     // GIVEN
-    const app = new App();
+    const app = new App({ context: { [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false } });
     const stack1 = new Stack(app, 'Stack1');
     const account1 = new ScopedAws(stack1).accountId;
     const stack2 = new Stack(app, 'Stack2');
@@ -483,13 +460,16 @@ describe('stack', () => {
         },
       },
     });
-
-
   });
 
   test('cross stack references and dependencies work within child stacks (non-nested)', () => {
     // GIVEN
-    const app = new App({ context: { '@aws-cdk/core:stackRelativeExports': true } });
+    const app = new App({
+      context: {
+        '@aws-cdk/core:stackRelativeExports': true,
+        [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false,
+      },
+    });
     const parent = new Stack(app, 'Parent');
     const child1 = new Stack(parent, 'Child1');
     const child2 = new Stack(parent, 'Child2');
@@ -560,6 +540,52 @@ describe('stack', () => {
     expect(templateA).toEqual(templateM);
   });
 
+  test('throw error if overrideLogicalId is used and logicalId is locked', () => {
+    // GIVEN: manual
+    const appM = new App();
+    const producerM = new Stack(appM, 'Producer');
+    const resourceM = new CfnResource(producerM, 'ResourceXXX', { type: 'AWS::Resource' });
+    producerM.exportValue(resourceM.getAtt('Att'));
+
+    // THEN - producers are the same
+    expect(() => {
+      resourceM.overrideLogicalId('OVERRIDE_LOGICAL_ID');
+    }).toThrow(/The logicalId for resource at path Producer\/ResourceXXX has been locked and cannot be overridden/);
+  });
+
+  test('do not throw error if overrideLogicalId is used and logicalId is not locked', () => {
+    // GIVEN: manual
+    const appM = new App();
+    const producerM = new Stack(appM, 'Producer');
+    const resourceM = new CfnResource(producerM, 'ResourceXXX', { type: 'AWS::Resource' });
+
+    // THEN - producers are the same
+    resourceM.overrideLogicalId('OVERRIDE_LOGICAL_ID');
+    producerM.exportValue(resourceM.getAtt('Att'));
+
+    const template = appM.synth().getStackByName(producerM.stackName).template;
+    expect(template).toMatchObject({
+      Outputs: {
+        ExportsOutputFnGetAttOVERRIDELOGICALIDAtt2DD28019: {
+          Export: {
+            Name: 'Producer:ExportsOutputFnGetAttOVERRIDELOGICALIDAtt2DD28019',
+          },
+          Value: {
+            'Fn::GetAtt': [
+              'OVERRIDE_LOGICAL_ID',
+              'Att',
+            ],
+          },
+        },
+      },
+      Resources: {
+        OVERRIDE_LOGICAL_ID: {
+          Type: 'AWS::Resource',
+        },
+      },
+    });
+  });
+
   test('automatic cross-stack references and manual exports look the same: nested stack edition', () => {
     // GIVEN: automatic
     const appA = new App();
@@ -622,8 +648,6 @@ describe('stack', () => {
 
     // THEN
     resolveReferences(app);
-
-
   });
 
   test('Stacks can be children of other stacks (substack) and they will be synthesized separately', () => {
@@ -638,8 +662,8 @@ describe('stack', () => {
 
     // THEN
     const assembly = app.synth();
-    expect(assembly.getStackByName(parentStack.stackName).template).toEqual({ Resources: { MyParentResource: { Type: 'Resource::Parent' } } });
-    expect(assembly.getStackByName(childStack.stackName).template).toEqual({ Resources: { MyChildResource: { Type: 'Resource::Child' } } });
+    expect(assembly.getStackByName(parentStack.stackName).template?.Resources).toEqual({ MyParentResource: { Type: 'Resource::Parent' } });
+    expect(assembly.getStackByName(childStack.stackName).template?.Resources).toEqual({ MyChildResource: { Type: 'Resource::Child' } });
   });
 
   test('Nested Stacks are synthesized with DESTROY policy', () => {
@@ -681,12 +705,11 @@ describe('stack', () => {
         }),
       },
     }));
-
   });
 
   test('cross-stack reference (substack references parent stack)', () => {
     // GIVEN
-    const app = new App();
+    const app = new App({ context: { [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false } });
     const parentStack = new Stack(app, 'parent');
     const childStack = new Stack(parentStack, 'child');
 
@@ -722,12 +745,17 @@ describe('stack', () => {
         },
       },
     });
-
   });
 
   test('cross-stack reference (parent stack references substack)', () => {
     // GIVEN
-    const app = new App({ context: { '@aws-cdk/core:stackRelativeExports': true } });
+    const app = new App({
+      context: {
+        '@aws-cdk/core:stackRelativeExports': true,
+        [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false,
+      },
+    });
+
     const parentStack = new Stack(app, 'parent');
     const childStack = new Stack(parentStack, 'child');
 
@@ -762,7 +790,6 @@ describe('stack', () => {
         },
       },
     });
-
   });
 
   test('cannot create cyclic reference between stacks', () => {
@@ -781,8 +808,6 @@ describe('stack', () => {
       app.synth();
       // eslint-disable-next-line max-len
     }).toThrow("'Stack1' depends on 'Stack2' (Stack1 -> Stack2.AWS::AccountId). Adding this dependency (Stack2 -> Stack1.AWS::AccountId) would create a cyclic reference.");
-
-
   });
 
   test('stacks know about their dependencies', () => {
@@ -799,8 +824,6 @@ describe('stack', () => {
 
     // THEN
     expect(stack2.dependencies.map(s => s.node.id)).toEqual(['Stack1']);
-
-
   });
 
   test('cannot create references to stacks in other regions/accounts', () => {
@@ -816,8 +839,6 @@ describe('stack', () => {
     expect(() => {
       app.synth();
     }).toThrow(/Stack "Stack2" cannot consume a cross reference from stack "Stack1"/);
-
-
   });
 
   test('urlSuffix does not imply a stack dependency', () => {
@@ -835,8 +856,6 @@ describe('stack', () => {
     app.synth();
 
     expect(second.dependencies.length).toEqual(0);
-
-
   });
 
   test('stack with region supplied via props returns literal value', () => {
@@ -846,8 +865,43 @@ describe('stack', () => {
 
     // THEN
     expect(stack.resolve(stack.region)).toEqual('es-norst-1');
+  });
 
+  describe('stack partition literal feature flag', () => {
+    // GIVEN
+    const featureFlag = { [cxapi.ENABLE_PARTITION_LITERALS]: true };
+    const envForRegion = (region: string) => { return { env: { account: '123456789012', region: region } }; };
 
+    // THEN
+    describe('does not change missing or unknown region behaviors', () => {
+      test('stacks with no region defined', () => {
+        const noRegionStack = new Stack(new App(), 'MissingRegion');
+        expect(noRegionStack.partition).toEqual(Aws.PARTITION);
+      });
+
+      test('stacks with an unknown region', () => {
+        const imaginaryRegionStack = new Stack(new App(), 'ImaginaryRegion', envForRegion('us-area51'));
+        expect(imaginaryRegionStack.partition).toEqual(Aws.PARTITION);
+      });
+    });
+
+    describe('changes known region behaviors only when enabled', () => {
+      test('(disabled)', () => {
+        const app = new App();
+        RegionInfo.regions.forEach(function(region) {
+          const regionStack = new Stack(app, `Region-${region.name}`, envForRegion(region.name));
+          expect(regionStack.partition).toEqual(Aws.PARTITION);
+        });
+      });
+
+      test('(enabled)', () => {
+        const app = new App({ context: featureFlag });
+        RegionInfo.regions.forEach(function(region) {
+          const regionStack = new Stack(app, `Region-${region.name}`, envForRegion(region.name));
+          expect(regionStack.partition).toEqual(RegionInfo.get(region.name).partition);
+        });
+      });
+    });
   });
 
   test('overrideLogicalId(id) can be used to override the logical ID of a resource', () => {
@@ -882,7 +936,6 @@ describe('stack', () => {
          },
       },
     });
-
   });
 
   test('Stack name can be overridden via properties', () => {
@@ -891,8 +944,6 @@ describe('stack', () => {
 
     // THEN
     expect(stack.stackName).toEqual('otherName');
-
-
   });
 
   test('Stack name is inherited from App name if available', () => {
@@ -903,8 +954,17 @@ describe('stack', () => {
 
     // THEN
     expect(stack.stackName).toEqual('ProdStackD5279B22');
+  });
 
+  test('generated stack names will not exceed 128 characters', () => {
+    // WHEN
+    const root = new App();
+    const app = new Construct(root, 'ProdAppThisNameButItWillOnlyBeTooLongWhenCombinedWithTheStackName' + 'z'.repeat(60));
+    const stack = new Stack(app, 'ThisNameIsVeryLongButItWillOnlyBeTooLongWhenCombinedWithTheAppNameStack');
 
+    // THEN
+    expect(stack.stackName.length).toEqual(128);
+    expect(stack.stackName).toEqual('ProdAppThisNameButItWillOnlyBeTooLongWhenCombinedWithTheStaceryLongButItWillOnlyBeTooLongWhenCombinedWithTheAppNameStack864CC1D3');
   });
 
   test('stack construct id does not go through stack name validation if there is an explicit stack name', () => {
@@ -920,7 +980,6 @@ describe('stack', () => {
     const session = app.synth();
     expect(stack.stackName).toEqual('valid-stack-name');
     expect(session.tryGetArtifact(stack.artifactId)).toBeDefined();
-
   });
 
   test('stack validation is performed on explicit stack name', () => {
@@ -930,8 +989,6 @@ describe('stack', () => {
     // THEN
     expect(() => new Stack(app, 'boom', { stackName: 'invalid:stack:name' }))
       .toThrow(/Stack name must match the regular expression/);
-
-
   });
 
   test('Stack.of(stack) returns the correct stack', () => {
@@ -940,14 +997,12 @@ describe('stack', () => {
     const parent = new Construct(stack, 'Parent');
     const construct = new Construct(parent, 'Construct');
     expect(Stack.of(construct)).toBe(stack);
-
   });
 
   test('Stack.of() throws when there is no parent Stack', () => {
     const root = new Construct(undefined as any, 'Root');
     const construct = new Construct(root, 'Construct');
     expect(() => Stack.of(construct)).toThrow(/should be created in the scope of a Stack, but no Stack found/);
-
   });
 
   test('Stack.of() works for substacks', () => {
@@ -967,7 +1022,6 @@ describe('stack', () => {
     expect(Stack.of(parentResource)).toBe(parentStack);
     expect(Stack.of(childStack)).toBe(childStack);
     expect(Stack.of(childResource)).toBe(childStack);
-
   });
 
   test('stack.availabilityZones falls back to Fn::GetAZ[0],[2] if region is not specified', () => {
@@ -983,7 +1037,6 @@ describe('stack', () => {
       { 'Fn::Select': [0, { 'Fn::GetAZs': '' }] },
       { 'Fn::Select': [1, { 'Fn::GetAZs': '' }] },
     ]);
-
   });
 
   describe('@aws-cdk/core:enableStackNameDuplicates', () => {
@@ -1049,7 +1102,6 @@ describe('stack', () => {
         expect(stack2.templateFile).toEqual('MyStack2.template.json');
       });
     });
-
   });
 
   test('metadata is collected at the stack boundary', () => {
@@ -1071,12 +1123,12 @@ describe('stack', () => {
     expect(asm.getStackByName(child.stackName).findMetadataByType('foo')).toEqual([
       { path: '/parent/child', type: 'foo', data: 'bar' },
     ]);
-
   });
 
   test('stack tags are reflected in the stack cloud assembly artifact metadata', () => {
     // GIVEN
-    const app = new App({ stackTraces: false });
+    const app = new App({ stackTraces: false, context: { [cxapi.NEW_STYLE_STACK_SYNTHESIS_CONTEXT]: false } });
+
     const stack1 = new Stack(app, 'stack1');
     const stack2 = new Stack(stack1, 'stack2');
 
@@ -1094,7 +1146,6 @@ describe('stack', () => {
 
     expect(asm.getStackArtifact(stack1.artifactId).manifest.metadata).toEqual({ '/stack1': expected });
     expect(asm.getStackArtifact(stack2.artifactId).manifest.metadata).toEqual({ '/stack1/stack2': expected });
-
   });
 
   test('stack tags are reflected in the stack artifact properties', () => {
@@ -1112,7 +1163,6 @@ describe('stack', () => {
 
     expect(asm.getStackArtifact(stack1.artifactId).tags).toEqual(expected);
     expect(asm.getStackArtifact(stack2.artifactId).tags).toEqual(expected);
-
   });
 
   test('Termination Protection is reflected in Cloud Assembly artifact', () => {
@@ -1124,27 +1174,6 @@ describe('stack', () => {
     const artifact = assembly.getStackArtifact(stack.artifactId);
 
     expect(artifact.terminationProtection).toEqual(true);
-
-
-  });
-
-  test('users can (still) override "synthesize()" in stack', () => {
-    let called = false;
-
-    class MyStack extends Stack {
-      synthesize(session: ISynthesisSession) {
-        called = true;
-        expect(session.outdir).toBeDefined();
-        expect(session.assembly.outdir).toEqual(session.outdir);
-      }
-    }
-
-    const app = new App();
-    new MyStack(app, 'my-stack');
-
-    app.synth();
-    expect(called).toEqual(true);
-
   });
 
   test('context can be set on a stack using a LegacySynthesizer', () => {
@@ -1155,8 +1184,6 @@ describe('stack', () => {
     stack.node.setContext('something', 'value');
 
     // THEN: no exception
-
-
   });
 
   test('context can be set on a stack using a DefaultSynthesizer', () => {
@@ -1167,26 +1194,101 @@ describe('stack', () => {
     stack.node.setContext('something', 'value');
 
     // THEN: no exception
-
-
   });
 
   test('version reporting can be configured on the app', () => {
     const app = new App({ analyticsReporting: true });
     expect(new Stack(app, 'Stack')._versionReportingEnabled).toBeDefined();
-
   });
 
   test('version reporting can be configured with context', () => {
     const app = new App({ context: { 'aws:cdk:version-reporting': true } });
     expect(new Stack(app, 'Stack')._versionReportingEnabled).toBeDefined();
-
   });
 
   test('version reporting can be configured on the stack', () => {
     const app = new App();
     expect(new Stack(app, 'Stack', { analyticsReporting: true })._versionReportingEnabled).toBeDefined();
+  });
 
+  test('requires bundling when wildcard is specified in BUNDLING_STACKS', () => {
+    const app = new App();
+    const stack = new Stack(app, 'Stack');
+    stack.node.setContext(cxapi.BUNDLING_STACKS, ['*']);
+    expect(stack.bundlingRequired).toBe(true);
+  });
+
+  test('requires bundling when stackName has an exact match in BUNDLING_STACKS', () => {
+    const app = new App();
+    const stack = new Stack(app, 'Stack');
+    stack.node.setContext(cxapi.BUNDLING_STACKS, ['Stack']);
+    expect(stack.bundlingRequired).toBe(true);
+  });
+
+  test('does not require bundling when no item from BUILDING_STACKS matches stackName', () => {
+    const app = new App();
+    const stack = new Stack(app, 'Stack');
+    stack.node.setContext(cxapi.BUNDLING_STACKS, ['Stac']);
+    expect(stack.bundlingRequired).toBe(false);
+  });
+
+  test('does not require bundling when BUNDLING_STACKS is empty', () => {
+    const app = new App();
+    const stack = new Stack(app, 'Stack');
+    stack.node.setContext(cxapi.BUNDLING_STACKS, []);
+    expect(stack.bundlingRequired).toBe(false);
+  });
+});
+
+describe('regionalFact', () => {
+  Fact.register({ name: 'MyFact', region: 'us-east-1', value: 'x.amazonaws.com' });
+  Fact.register({ name: 'MyFact', region: 'eu-west-1', value: 'x.amazonaws.com' });
+  Fact.register({ name: 'MyFact', region: 'cn-north-1', value: 'x.amazonaws.com.cn' });
+
+  Fact.register({ name: 'WeirdFact', region: 'us-east-1', value: 'oneformat' });
+  Fact.register({ name: 'WeirdFact', region: 'eu-west-1', value: 'otherformat' });
+
+  test('regional facts return a literal value if possible', () => {
+    const stack = new Stack(undefined, 'Stack', { env: { region: 'us-east-1' } });
+    expect(stack.regionalFact('MyFact')).toEqual('x.amazonaws.com');
+  });
+
+  test('regional facts are simplified to use URL_SUFFIX token if possible', () => {
+    const stack = new Stack();
+    expect(stack.regionalFact('MyFact')).toEqual(`x.${Aws.URL_SUFFIX}`);
+  });
+
+  test('regional facts are simplified to use concrete values if URL_SUFFIX token is not necessary', () => {
+    const stack = new Stack();
+    Node.of(stack).setContext(cxapi.TARGET_PARTITIONS, ['aws']);
+    expect(stack.regionalFact('MyFact')).toEqual('x.amazonaws.com');
+  });
+
+  test('regional facts generate a mapping if necessary', () => {
+    const stack = new Stack();
+    new CfnOutput(stack, 'TheFact', {
+      value: stack.regionalFact('WeirdFact'),
+    });
+
+    expect(toCloudFormation(stack)).toEqual({
+      Mappings: {
+        WeirdFactMap: {
+          'eu-west-1': { value: 'otherformat' },
+          'us-east-1': { value: 'oneformat' },
+        },
+      },
+      Outputs: {
+        TheFact: {
+          Value: {
+            'Fn::FindInMap': [
+              'WeirdFactMap',
+              { Ref: 'AWS::Region' },
+              'value',
+            ],
+          },
+        },
+      },
+    });
   });
 });
 

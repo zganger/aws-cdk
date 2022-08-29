@@ -6,6 +6,7 @@
  */
 
 import * as path from 'path';
+import * as pkglint from '@aws-cdk/pkglint';
 import * as fs from 'fs-extra';
 import * as cfnspec from '../lib';
 
@@ -20,12 +21,14 @@ async function main() {
   }
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const version = require('../package.json').version;
+  const cfnSpecPkgJson = require('../package.json');
+  const version = cfnSpecPkgJson.version;
+  const jestTypesVersion = cfnSpecPkgJson.devDependencies['@types/jest'];
 
   // iterate over all cloudformation namespaces
   for (const namespace of cfnspec.namespaces()) {
-    const module = cfnspec.createModuleDefinitionFromCfnNamespace(namespace);
-    const lowcaseModuleName = module.moduleName.toLocaleLowerCase();
+    const module = pkglint.createModuleDefinitionFromCfnNamespace(namespace);
+    const lowcaseModuleName = module.moduleBaseName.toLocaleLowerCase();
     const packagePath = path.join(root, module.moduleName);
 
     // we already have a module for this namesapce, move on.
@@ -79,10 +82,13 @@ async function main() {
 
     console.log(`generating module for ${module.packageName}...`);
 
+    const description = `${namespace} Construct Library`;
+
     await write('package.json', {
       name: module.packageName,
       version,
-      description: `The CDK Construct Library for ${namespace}`,
+      description,
+      private: true,
       main: 'lib/index.js',
       types: 'lib/index.d.ts',
       jsii: {
@@ -94,7 +100,7 @@ async function main() {
             packageId: module.dotnetPackage,
             signAssembly: true,
             assemblyOriginatorKeyFile: '../../key.snk',
-            iconUrl: 'https://raw.githubusercontent.com/aws/aws-cdk/master/logo/default-256-dark.png',
+            iconUrl: 'https://raw.githubusercontent.com/aws/aws-cdk/main/logo/default-256-dark.png',
           },
           java: {
             package: `${module.javaGroupId}.${module.javaPackage}`,
@@ -106,10 +112,17 @@ async function main() {
           python: {
             classifiers: [
               'Framework :: AWS CDK',
-              'Framework :: AWS CDK :: 1',
+              'Framework :: AWS CDK :: 2',
             ],
             distName: module.pythonDistName,
             module: module.pythonModuleName,
+          },
+        },
+        metadata: {
+          jsii: {
+            rosetta: {
+              strict: true,
+            },
           },
         },
       },
@@ -162,16 +175,18 @@ async function main() {
         '@aws-cdk/cdk-build-tools': version,
         '@aws-cdk/cfn2ts': version,
         '@aws-cdk/pkglint': version,
-        '@types/jest': '^26.0.22',
+        '@types/jest': jestTypesVersion,
       },
       dependencies: {
         '@aws-cdk/core': version,
+        'constructs': '^10.0.0',
       },
       peerDependencies: {
         '@aws-cdk/core': version,
+        'constructs': '^10.0.0',
       },
       engines: {
-        node: '>= 10.13.0 <13 || >=13.7.0',
+        node: '>= 14.15.0',
       },
       stability: 'experimental',
       maturity: 'cfn-only',
@@ -251,7 +266,7 @@ async function main() {
       '});',
     ]);
 
-    await cfnspec.createLibraryReadme(namespace, path.join(packagePath, 'README.md'));
+    await pkglint.createLibraryReadme(namespace, path.join(packagePath, 'README.md'));
 
     await write('.eslintrc.js', [
       "const baseConfig = require('@aws-cdk/cdk-build-tools/config/eslintrc');",
@@ -264,6 +279,17 @@ async function main() {
       'module.exports = baseConfig;',
     ]);
 
+    await write('rosetta/default.ts-fixture', [
+      "import { Construct } from 'constructs';",
+      "import { Stack } from '@aws-cdk/core';",
+      '',
+      'class MyStack extends Stack {',
+      '  constructor(scope: Construct, id: string) {',
+      '    /// here',
+      '  }',
+      '}',
+    ]);
+
     const templateDir = path.join(__dirname, 'template');
     for (const file of await fs.readdir(templateDir)) {
       await fs.copy(path.join(templateDir, file), path.join(packagePath, file));
@@ -272,12 +298,11 @@ async function main() {
     await addDependencyToMegaPackage(path.join('@aws-cdk', 'cloudformation-include'), module.packageName, version, ['dependencies', 'peerDependencies']);
     await addDependencyToMegaPackage('aws-cdk-lib', module.packageName, version, ['devDependencies']);
     await addDependencyToMegaPackage('monocdk', module.packageName, version, ['devDependencies']);
-    await addDependencyToMegaPackage('decdk', module.packageName, version, ['dependencies']);
   }
 }
 
 /**
- * A few of our packages (e.g., decdk, aws-cdk-lib) require a dependency on every service package.
+ * A few of our packages (e.g., aws-cdk-lib) require a dependency on every service package.
  * This automates adding the dependency (and peer dependency) to the package.json.
  */
 async function addDependencyToMegaPackage(megaPackageName: string, packageName: string, version: string, dependencyTypes: string[]) {

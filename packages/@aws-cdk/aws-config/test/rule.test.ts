@@ -1,5 +1,4 @@
-import '@aws-cdk/assert-internal/jest';
-import { ResourcePart } from '@aws-cdk/assert-internal';
+import { Template } from '@aws-cdk/assertions';
 import * as targets from '@aws-cdk/aws-events-targets';
 import * as lambda from '@aws-cdk/aws-lambda';
 import * as cdk from '@aws-cdk/core';
@@ -22,7 +21,7 @@ describe('rule', () => {
     });
 
     // THEN
-    expect(stack).toHaveResource('AWS::Config::ConfigRule', {
+    Template.fromStack(stack).hasResourceProperties('AWS::Config::ConfigRule', {
       Source: {
         Owner: 'AWS',
         SourceIdentifier: 'AWS_SUPER_COOL',
@@ -42,7 +41,7 @@ describe('rule', () => {
     const fn = new lambda.Function(stack, 'Function', {
       code: lambda.AssetCode.fromInline('foo'),
       handler: 'index.handler',
-      runtime: lambda.Runtime.NODEJS_10_X,
+      runtime: lambda.Runtime.NODEJS_14_X,
     });
 
     // WHEN
@@ -59,7 +58,7 @@ describe('rule', () => {
     });
 
     // THEN
-    expect(stack).toHaveResource('AWS::Config::ConfigRule', {
+    Template.fromStack(stack).hasResource('AWS::Config::ConfigRule', {
       Properties: {
         Source: {
           Owner: 'CUSTOM_LAMBDA',
@@ -97,16 +96,16 @@ describe('rule', () => {
         'Function76856677',
         'FunctionServiceRole675BB04A',
       ],
-    }, ResourcePart.CompleteDefinition);
+    });
 
-    expect(stack).toHaveResource('AWS::Lambda::Permission', {
+    Template.fromStack(stack).hasResourceProperties('AWS::Lambda::Permission', {
       Principal: 'config.amazonaws.com',
       SourceAccount: {
         Ref: 'AWS::AccountId',
       },
     });
 
-    expect(stack).toHaveResource('AWS::IAM::Role', {
+    Template.fromStack(stack).hasResourceProperties('AWS::IAM::Role', {
       ManagedPolicyArns: [
         {
           'Fn::Join': [
@@ -147,7 +146,7 @@ describe('rule', () => {
     });
 
     // THEN
-    expect(stack).toHaveResource('AWS::Config::ConfigRule', {
+    Template.fromStack(stack).hasResourceProperties('AWS::Config::ConfigRule', {
       Scope: {
         ComplianceResourceId: 'i-1234',
         ComplianceResourceTypes: [
@@ -168,7 +167,7 @@ describe('rule', () => {
     });
 
     // THEN
-    expect(stack).toHaveResource('AWS::Config::ConfigRule', {
+    Template.fromStack(stack).hasResourceProperties('AWS::Config::ConfigRule', {
       Scope: {
         ComplianceResourceTypes: [
           'AWS::S3::Bucket',
@@ -189,7 +188,7 @@ describe('rule', () => {
     });
 
     // THEN
-    expect(stack).toHaveResource('AWS::Config::ConfigRule', {
+    Template.fromStack(stack).hasResourceProperties('AWS::Config::ConfigRule', {
       Scope: {
         TagKey: 'key',
         TagValue: 'value',
@@ -203,7 +202,7 @@ describe('rule', () => {
     const fn = new lambda.Function(stack, 'Function', {
       code: lambda.AssetCode.fromInline('foo'),
       handler: 'index.handler',
-      runtime: lambda.Runtime.NODEJS_10_X,
+      runtime: lambda.Runtime.NODEJS_14_X,
     });
 
     // THEN
@@ -220,7 +219,7 @@ describe('rule', () => {
     const fn = new lambda.Function(stack, 'Function', {
       code: lambda.AssetCode.fromInline('foo'),
       handler: 'index.handler',
-      runtime: lambda.Runtime.NODEJS_10_X,
+      runtime: lambda.Runtime.NODEJS_14_X,
     });
 
     // THEN
@@ -239,7 +238,7 @@ describe('rule', () => {
     const fn = new lambda.Function(stack, 'Function', {
       code: lambda.Code.fromInline('dummy'),
       handler: 'index.handler',
-      runtime: lambda.Runtime.NODEJS_10_X,
+      runtime: lambda.Runtime.NODEJS_14_X,
     });
 
     // WHEN
@@ -247,7 +246,7 @@ describe('rule', () => {
       target: new targets.LambdaFunction(fn),
     });
 
-    expect(stack).toHaveResource('AWS::Events::Rule', {
+    Template.fromStack(stack).hasResourceProperties('AWS::Events::Rule', {
       EventPattern: {
         'source': [
           'aws.config',
@@ -265,4 +264,157 @@ describe('rule', () => {
       },
     });
   });
+
+  test('Add EKS Cluster check to ManagedRule', () => {
+    // GIVEN
+    const stack1 = new cdk.Stack();
+    const stack2 = new cdk.Stack();
+
+    // WHEN
+    new config.ManagedRule(stack1, 'RuleEksClusterOldest', {
+      identifier: config.ManagedRuleIdentifiers.EKS_CLUSTER_OLDEST_SUPPORTED_VERSION,
+      ruleScope: config.RuleScope.fromResource(config.ResourceType.EKS_CLUSTER),
+    });
+    new config.ManagedRule(stack2, 'RuleEksClusterVersion', {
+      identifier: config.ManagedRuleIdentifiers.EKS_CLUSTER_SUPPORTED_VERSION,
+      ruleScope: config.RuleScope.fromResources([config.ResourceType.EKS_CLUSTER]),
+    });
+
+    // THEN
+    Template.fromStack(stack1).hasResourceProperties('AWS::Config::ConfigRule', {
+      Source: {
+        SourceIdentifier: 'EKS_CLUSTER_OLDEST_SUPPORTED_VERSION',
+      },
+      Scope: {
+        ComplianceResourceTypes: ['AWS::EKS::Cluster'],
+      },
+    });
+    Template.fromStack(stack2).hasResourceProperties('AWS::Config::ConfigRule', {
+      Source: {
+        SourceIdentifier: 'EKS_CLUSTER_SUPPORTED_VERSION',
+      },
+      Scope: {
+        ComplianceResourceTypes: ['AWS::EKS::Cluster'],
+      },
+    });
+  });
+
+  test('scope to resource', () => {
+    // GIVEN
+    const stack = new cdk.Stack();
+
+    // WHEN
+    new config.ManagedRule(stack, 'Rule', {
+      identifier: 'AWS_SUPER_COOL',
+      ruleScope: config.RuleScope.fromResources([
+        config.ResourceType.EC2_NETWORK_INTERFACE,
+        config.ResourceType.EC2_TRANSIT_GATEWAY,
+        config.ResourceType.EC2_TRANSIT_GATEWAY_ATTACHMENT,
+        config.ResourceType.EC2_TRANSIT_GATEWAY_ROUTE_TABLE,
+        config.ResourceType.EC2_REGISTERED_HA_INSTANCE,
+        config.ResourceType.EC2_LAUNCH_TEMPLATE,
+        config.ResourceType.ECR_REPOSITORY,
+        config.ResourceType.ECR_PUBLIC_REPOSITORY,
+        config.ResourceType.ECS_CLUSTER,
+        config.ResourceType.ECS_TASK_DEFINITION,
+        config.ResourceType.ECS_SERVICE,
+        config.ResourceType.EFS_FILE_SYSTEM,
+        config.ResourceType.EFS_ACCESS_POINT,
+        config.ResourceType.EMR_SECURITY_CONFIGURATION,
+        config.ResourceType.GUARDDUTY_DETECTOR,
+        config.ResourceType.OPENSEARCH_DOMAIN,
+        config.ResourceType.KINESIS_STREAM,
+        config.ResourceType.KINESIS_STREAM_CONSUMER,
+        config.ResourceType.MSK_CLUSTER,
+        config.ResourceType.ROUTE53_RESOLVER_RESOLVER_ENDPOINT,
+        config.ResourceType.ROUTE53_RESOLVER_RESOLVER_RULE,
+        config.ResourceType.ROUTE53_RESOLVER_RESOLVER_RULE_ASSOCIATION,
+        config.ResourceType.SAGEMAKER_CODE_REPOSITORY,
+        config.ResourceType.SAGEMAKER_MODEL,
+        config.ResourceType.SAGEMAKER_NOTEBOOK_INSTANCE,
+        config.ResourceType.WORKSPACES_CONNECTION_ALIAS,
+        config.ResourceType.WORKSPACES_WORKSPACE,
+        config.ResourceType.BACKUP_BACKUP_PLAN,
+        config.ResourceType.BACKUP_BACKUP_SELECTION,
+        config.ResourceType.BACKUP_BACKUP_VAULT,
+        config.ResourceType.BACKUP_RECOVERY_POINT,
+        config.ResourceType.BATCH_JOB_QUEUE,
+        config.ResourceType.BATCH_COMPUTE_ENVIRONMENT,
+        config.ResourceType.CODEDEPLOY_APPLICATION,
+        config.ResourceType.CODEDEPLOY_DEPLOYMENT_CONFIG,
+        config.ResourceType.CODEDEPLOY_DEPLOYMENT_GROUP,
+        config.ResourceType.CONFIG_RESOURCE_COMPLIANCE,
+        config.ResourceType.CONFIG_CONFORMANCE_PACK_COMPLIANCE,
+        config.ResourceType.DMS_EVENT_SUBSCRIPTION,
+        config.ResourceType.DMS_REPLICATION_SUBNET_GROUP,
+        config.ResourceType.GLOBALACCELERATOR_LISTENER,
+        config.ResourceType.GLOBALACCELERATOR_ENDPOINT_GROUP,
+        config.ResourceType.GLOBALACCELERATOR_ACCELERATOR,
+        config.ResourceType.IAM_ACCESSANALYZER_ANALYZER,
+        config.ResourceType.STEPFUNCTIONS_ACTIVITY,
+        config.ResourceType.STEPFUNCTIONS_STATE_MACHINE,
+        config.ResourceType.WAFV2_IP_SET,
+        config.ResourceType.WAFV2_REGEX_PATTERN_SET,
+        config.ResourceType.ELBV2_LISTENER,
+      ]),
+    });
+
+    // THEN
+    Template.fromStack(stack).hasResourceProperties('AWS::Config::ConfigRule', {
+      Scope: {
+        ComplianceResourceTypes: [
+          'AWS::EC2::NetworkInterface',
+          'AWS::EC2::TransitGateway',
+          'AWS::EC2::TransitGatewayAttachment',
+          'AWS::EC2::TransitGatewayRouteTable',
+          'AWS::EC2::RegisteredHAInstance',
+          'AWS::EC2::LaunchTemplate',
+          'AWS::ECR::Repository',
+          'AWS::ECR::PublicRepository',
+          'AWS::ECS::Cluster',
+          'AWS::ECS::TaskDefinition',
+          'AWS::ECS::Service',
+          'AWS::EFS::FileSystem',
+          'AWS::EFS::AccessPoint',
+          'AWS::EMR::SecurityConfiguration',
+          'AWS::GuardDuty::Detector',
+          'AWS::OpenSearch::Domain',
+          'AWS::Kinesis::Stream',
+          'AWS::Kinesis::StreamConsumer',
+          'AWS::MSK::Cluster',
+          'AWS::Route53Resolver::ResolverEndpoint',
+          'AWS::Route53Resolver::ResolverRule',
+          'AWS::Route53Resolver::ResolverRuleAssociation',
+          'AWS::SageMaker::CodeRepository',
+          'AWS::SageMaker::Model',
+          'AWS::SageMaker::NotebookInstance',
+          'AWS::WorkSpaces::ConnectionAlias',
+          'AWS::WorkSpaces::Workspace',
+          'AWS::Backup::BackupPlan',
+          'AWS::Backup::BackupSelection',
+          'AWS::Backup::BackupVault',
+          'AWS::Backup::RecoveryPoint',
+          'AWS::Batch::JobQueue',
+          'AWS::Batch::ComputeEnvironment',
+          'AWS::CodeDeploy::Application',
+          'AWS::CodeDeploy::DeploymentConfig',
+          'AWS::CodeDeploy::DeploymentGroup',
+          'AWS::Config::ResourceCompliance',
+          'AWS::Config::ConformancePackCompliance',
+          'AWS::DMS::EventSubscription',
+          'AWS::DMS::ReplicationSubnetGroup',
+          'AWS::GlobalAccelerator::Listener',
+          'AWS::GlobalAccelerator::EndpointGroup',
+          'AWS::GlobalAccelerator::Accelerator',
+          'AWS::AccessAnalyzer::Analyzer',
+          'AWS::StepFunctions::Activity',
+          'AWS::StepFunctions::StateMachine',
+          'AWS::WAFv2::IPSet',
+          'AWS::WAFv2::RegexPatternSet',
+          'AWS::ElasticLoadBalancingV2::Listener',
+        ],
+      },
+    });
+  });
+
 });

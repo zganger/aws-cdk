@@ -1,7 +1,8 @@
+import { describeDeprecated } from '@aws-cdk/cdk-build-tools';
 import { CfnInclude, CfnOutput, CfnParameter, CfnResource, Stack } from '../lib';
 import { toCloudFormation } from './util';
 
-describe('include', () => {
+describeDeprecated('include', () => {
   test('the Include construct can be used to embed an existing template as-is into a stack', () => {
     const stack = new Stack();
 
@@ -14,8 +15,6 @@ describe('include', () => {
         MyResource2: { Type: 'ResourceType2' },
       },
     });
-
-
   });
 
   test('included templates can co-exist with elements created programmatically', () => {
@@ -38,8 +37,6 @@ describe('include', () => {
       },
       Outputs: { MyOutput: { Description: 'Out!', Value: 'hey' } },
     });
-
-
   });
 
   test('exception is thrown in construction if an entity from an included template has the same id as a programmatic entity', () => {
@@ -51,7 +48,6 @@ describe('include', () => {
     new CfnParameter(stack, 'MyParam', { type: 'Integer' }); // duplicate!
 
     expect(() => toCloudFormation(stack)).toThrow();
-
   });
 
   test('correctly merges template sections that contain strings', () => {
@@ -74,8 +70,6 @@ describe('include', () => {
       AWSTemplateFormatVersion: '2010-09-09',
       Description: 'Test 1\nTest 2',
     });
-
-
   });
 });
 

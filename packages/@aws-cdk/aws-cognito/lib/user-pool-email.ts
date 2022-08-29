@@ -3,11 +3,6 @@ import { Construct } from 'constructs';
 import { toASCII as punycodeEncode } from 'punycode/';
 
 /**
-  * The valid Amazon SES configuration regions
-  */
-const REGIONS = ['us-east-1', 'us-west-2', 'eu-west-1'];
-
-/**
  * Configuration for Cognito sending emails via Amazon SES
  */
 export interface UserPoolSESOptions {
@@ -56,11 +51,16 @@ export interface UserPoolSESOptions {
    * region in which the UserPool is deployed, you must specify that
    * region here.
    *
-   * Must be 'us-east-1', 'us-west-2', or 'eu-west-1'
-   *
    * @default - The same region as the Cognito UserPool
    */
   readonly sesRegion?: string;
+
+  /**
+   * SES Verified custom domain to be used to verify the identity
+   *
+   * @default - no domain
+   */
+  readonly sesVerifiedDomain?: string
 }
 
 /**
@@ -164,15 +164,16 @@ class SESEmail extends UserPoolEmail {
       throw new Error('Your stack region cannot be determined so "sesRegion" is required in SESOptions');
     }
 
-    if (this.options.sesRegion && !REGIONS.includes(this.options.sesRegion)) {
-      throw new Error(`sesRegion must be one of 'us-east-1', 'us-west-2', 'eu-west-1'. received ${this.options.sesRegion}`);
-    } else if (!this.options.sesRegion && !REGIONS.includes(region)) {
-      throw new Error(`Your stack is in ${region}, which is not a SES Region. Please provide a valid value for 'sesRegion'`);
-    }
-
     let from = this.options.fromEmail;
     if (this.options.fromName) {
       from = `${this.options.fromName} <${this.options.fromEmail}>`;
+    }
+
+    if (this.options.sesVerifiedDomain) {
+      const domainFromEmail = this.options.fromEmail.split('@').pop();
+      if (domainFromEmail !== this.options.sesVerifiedDomain) {
+        throw new Error('"fromEmail" contains a different domain than the "sesVerifiedDomain"');
+      }
     }
 
     return {
@@ -183,7 +184,7 @@ class SESEmail extends UserPoolEmail {
       sourceArn: Stack.of(scope).formatArn({
         service: 'ses',
         resource: 'identity',
-        resourceName: encodeAndTest(this.options.fromEmail),
+        resourceName: encodeAndTest(this.options.sesVerifiedDomain ?? this.options.fromEmail),
         region: this.options.sesRegion ?? region,
       }),
     };

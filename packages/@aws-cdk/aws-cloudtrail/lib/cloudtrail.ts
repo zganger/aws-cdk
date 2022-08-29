@@ -115,6 +115,16 @@ export interface TrailProps {
    * @default - if not supplied a bucket will be created with all the correct permisions
    */
   readonly bucket?: s3.IBucket;
+
+  /**
+   * Specifies whether the trail is applied to all accounts in an organization in AWS Organizations, or only for the current AWS account.
+   *
+   * If this is set to true and the current account is a management account for an organization in AWS Organizations, the trail will be created in all AWS accounts that belong to the organization.
+   * If this is set to false, the trail will remain in the current AWS account but be deleted from all member accounts in the organization.
+   *
+   * @default - false
+   */
+  readonly isOrganizationTrail?: boolean
 }
 
 /**
@@ -209,7 +219,7 @@ export class Trail extends Resource {
 
     const cloudTrailPrincipal = new iam.ServicePrincipal('cloudtrail.amazonaws.com');
 
-    this.s3bucket = props.bucket || new s3.Bucket(this, 'S3', { encryption: s3.BucketEncryption.UNENCRYPTED });
+    this.s3bucket = props.bucket || new s3.Bucket(this, 'S3', { encryption: s3.BucketEncryption.UNENCRYPTED, enforceSSL: true });
 
     this.s3bucket.addToResourcePolicy(new iam.PolicyStatement({
       resources: [this.s3bucket.bucketArn],
@@ -285,6 +295,7 @@ export class Trail extends Resource {
       cloudWatchLogsRoleArn: logsRole?.roleArn,
       snsTopicName: this.topic?.topicName,
       eventSelectors: this.eventSelectors,
+      isOrganizationTrail: props.isOrganizationTrail,
     });
 
     this.trailArn = this.getResourceArnAttribute(trail.attrArn, {

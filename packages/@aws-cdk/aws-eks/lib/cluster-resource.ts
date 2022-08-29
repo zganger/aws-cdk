@@ -8,10 +8,6 @@ import { CLUSTER_RESOURCE_TYPE } from './cluster-resource-handler/consts';
 import { ClusterResourceProvider } from './cluster-resource-provider';
 import { CfnCluster } from './eks.generated';
 
-// v2 - keep this import as a separate section to reduce merge conflict when forward merging with the v2 branch.
-// eslint-disable-next-line
-import { Construct as CoreConstruct } from '@aws-cdk/core';
-
 export interface ClusterResourceProps {
   readonly resourcesVpcConfig: CfnCluster.ResourcesVpcConfigProperty;
   readonly roleArn: string;
@@ -28,6 +24,8 @@ export interface ClusterResourceProps {
   readonly secretsEncryptionKey?: kms.IKey;
   readonly onEventLayer?: lambda.ILayerVersion;
   readonly clusterHandlerSecurityGroup?: ec2.ISecurityGroup;
+  readonly tags?: { [key: string]: string };
+  readonly logging?: { [key: string]: [ { [key: string]: any } ] };
 }
 
 /**
@@ -40,7 +38,7 @@ export interface ClusterResourceProps {
  * cluster via `kubectl` to enable Kubernetes management capabilities like apply
  * manifest and IAM role/user RBAC mapping.
  */
-export class ClusterResource extends CoreConstruct {
+export class ClusterResource extends Construct {
   public readonly attrEndpoint: string;
   public readonly attrArn: string;
   public readonly attrCertificateAuthorityData: string;
@@ -89,6 +87,8 @@ export class ClusterResource extends CoreConstruct {
             endpointPrivateAccess: props.endpointPrivateAccess,
             publicAccessCidrs: props.publicAccessCidrs,
           },
+          tags: props.tags,
+          logging: props.logging,
         },
         AssumeRoleArn: this.adminRole.roleArn,
 

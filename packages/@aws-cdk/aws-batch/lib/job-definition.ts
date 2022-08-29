@@ -1,7 +1,7 @@
 import * as ec2 from '@aws-cdk/aws-ec2';
 import * as ecs from '@aws-cdk/aws-ecs';
 import * as iam from '@aws-cdk/aws-iam';
-import { Duration, IResource, Resource, Stack } from '@aws-cdk/core';
+import { ArnFormat, Duration, IResource, Resource, Stack } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { CfnJobDefinition } from './batch.generated';
 import { ExposedSecret } from './exposed-secret';
@@ -111,6 +111,13 @@ export interface JobDefinitionContainer {
    * @default none
    */
   readonly environment?: { [key: string]: string };
+
+  /**
+   * The environment variables from secrets manager or ssm parameter store
+   *
+   * @default none
+   */
+  readonly secrets?: { [key: string]: ecs.Secret };
 
   /**
    * The image used to start a container.
@@ -382,7 +389,7 @@ export class JobDefinition extends Resource implements IJobDefinition {
    */
   public static fromJobDefinitionArn(scope: Construct, id: string, jobDefinitionArn: string): IJobDefinition {
     const stack = Stack.of(scope);
-    const jobDefName = stack.parseArn(jobDefinitionArn).resourceName!;
+    const jobDefName = stack.splitArn(jobDefinitionArn, ArnFormat.SLASH_RESOURCE_NAME).resourceName!;
 
     class Import extends Resource implements IJobDefinition {
       public readonly jobDefinitionArn = jobDefinitionArn;
@@ -405,7 +412,7 @@ export class JobDefinition extends Resource implements IJobDefinition {
     const jobDefArn = stack.formatArn({
       service: 'batch',
       resource: 'job-definition',
-      sep: '/',
+      arnFormat: ArnFormat.SLASH_RESOURCE_NAME,
       resourceName: jobDefinitionName,
     });
 
@@ -453,6 +460,14 @@ export class JobDefinition extends Resource implements IJobDefinition {
       platformCapabilities: props.platformCapabilities ?? [PlatformCapabilities.EC2],
     });
 
+    // add read secrets permission to execution role
+    if ( props.container.secrets && props.container.executionRole ) {
+      const executionRole = props.container.executionRole;
+      Object.values(props.container.secrets).forEach((secret) => {
+        secret.grantRead(executionRole);
+      });
+    }
+
     this.jobDefinitionArn = this.getResourceArnAttribute(jobDef.ref, {
       service: 'batch',
       resource: 'job-definition',
@@ -461,11 +476,11 @@ export class JobDefinition extends Resource implements IJobDefinition {
     this.jobDefinitionName = this.getResourceNameAttribute(jobDef.ref);
   }
 
-  private deserializeEnvVariables(env?: { [name: string]: string }): CfnJobDefinition.EnvironmentProperty[] | undefined {
+  private deserializeEnvVariables(env?: { [name: string]: string }): CfnJobDefinition.EnvironmentProperty[] {
     const vars = new Array<CfnJobDefinition.EnvironmentProperty>();
 
     if (env === undefined) {
-      return undefined;
+      return vars;
     }
 
     Object.keys(env).map((name: string) => {
@@ -504,9 +519,35 @@ export class JobDefinition extends Resource implements IJobDefinition {
       return undefined;
     }
 
+    // If the AWS_*** environment variables are not explicitly set to the container, infer them from the current environment.
+    // This makes the usage of tools like AWS SDK inside the container frictionless
+
+    const environment = this.deserializeEnvVariables(container.environment);
+
+    if (!environment.find((x) => x.name === 'AWS_REGION')) {
+      environment.push({
+        name: 'AWS_REGION',
+        value: Stack.of(this).region,
+      });
+    }
+    if (!environment.find((x) => x.name === 'AWS_ACCOUNT')) {
+      environment.push({
+        name: 'AWS_ACCOUNT',
+        value: Stack.of(this).account,
+      });
+    }
+
     return {
       command: container.command,
-      environment: this.deserializeEnvVariables(container.environment),
+      environment,
+      secrets: container.secrets
+        ? Object.entries(container.secrets).map(([key, value]) => {
+          return {
+            name: key,
+            valueFrom: value.arn,
+          };
+        })
+        : undefined,
       image: this.imageConfig.imageName,
       instanceType: container.instanceType && container.instanceType.toString(),
       jobRoleArn: container.jobRole && container.jobRole.roleArn,

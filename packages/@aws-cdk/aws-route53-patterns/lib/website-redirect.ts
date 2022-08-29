@@ -4,12 +4,8 @@ import { CloudFrontWebDistribution, OriginProtocolPolicy, PriceClass, ViewerCert
 import { ARecord, AaaaRecord, IHostedZone, RecordTarget } from '@aws-cdk/aws-route53';
 import { CloudFrontTarget } from '@aws-cdk/aws-route53-targets';
 import { BlockPublicAccess, Bucket, RedirectProtocol } from '@aws-cdk/aws-s3';
-import { RemovalPolicy, Stack, Token } from '@aws-cdk/core';
+import { ArnFormat, RemovalPolicy, Stack, Token } from '@aws-cdk/core';
 import { Construct } from 'constructs';
-
-// v2 - keep this import as a separate section to reduce merge conflict when forward merging with the v2 branch.
-// eslint-disable-next-line
-import { Construct as CoreConstruct } from '@aws-cdk/core';
 
 /**
  * Properties to configure an HTTPS Redirect
@@ -55,14 +51,14 @@ export interface HttpsRedirectProps {
  * Allows creating a domainA -> domainB redirect using CloudFront and S3.
  * You can specify multiple domains to be redirected.
  */
-export class HttpsRedirect extends CoreConstruct {
+export class HttpsRedirect extends Construct {
   constructor(scope: Construct, id: string, props: HttpsRedirectProps) {
     super(scope, id);
 
     const domainNames = props.recordNames ?? [props.zone.zoneName];
 
     if (props.certificate) {
-      const certificateRegion = Stack.of(this).parseArn(props.certificate.certificateArn).region;
+      const certificateRegion = Stack.of(this).splitArn(props.certificate.certificateArn, ArnFormat.SLASH_RESOURCE_NAME).region;
       if (!Token.isUnresolved(certificateRegion) && certificateRegion !== 'us-east-1') {
         throw new Error(`The certificate must be in the us-east-1 region and the certificate you provided is in ${certificateRegion}.`);
       }
@@ -101,7 +97,7 @@ export class HttpsRedirect extends CoreConstruct {
     });
 
     domainNames.forEach((domainName) => {
-      const hash = crypto.createHash('md5').update(domainName).digest('hex').substr(0, 6);
+      const hash = crypto.createHash('md5').update(domainName).digest('hex').slice(0, 6);
       const aliasProps = {
         recordName: domainName,
         zone: props.zone,

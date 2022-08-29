@@ -1,6 +1,8 @@
 import { Match, Template } from '@aws-cdk/assertions';
 import { Role, ServicePrincipal } from '@aws-cdk/aws-iam';
+import * as kms from '@aws-cdk/aws-kms';
 import * as lambda from '@aws-cdk/aws-lambda';
+import { testDeprecated } from '@aws-cdk/cdk-build-tools';
 import { CfnParameter, Duration, Stack, Tags } from '@aws-cdk/core';
 import { Construct } from 'constructs';
 import { AccountRecovery, Mfa, NumberAttribute, StringAttribute, UserPool, UserPoolIdentityProvider, UserPoolOperation, VerificationEmailStyle, UserPoolEmail } from '../lib';
@@ -233,6 +235,28 @@ describe('User Pool', () => {
     });
   });
 
+  test('snsRegion property is recognized', () => {
+    // GIVEN
+    const stack = new Stack();
+    const role = Role.fromRoleArn(stack, 'smsRole', 'arn:aws:iam::664773442901:role/sms-role');
+
+    // WHEN
+    new UserPool(stack, 'Pool', {
+      smsRole: role,
+      smsRoleExternalId: 'test-external-id',
+      snsRegion: 'test-region-1',
+    });
+
+    // THEN
+    Template.fromStack(stack).hasResourceProperties('AWS::Cognito::UserPool', {
+      SmsConfiguration: {
+        ExternalId: 'test-external-id',
+        SnsCallerArn: role.roleArn,
+        SnsRegion: 'test-region-1',
+      },
+    });
+  });
+
   test('import using id', () => {
     // GIVEN
     const stack = new Stack(undefined, undefined, {
@@ -311,7 +335,7 @@ describe('User Pool', () => {
     const fn = fooFunction(stack, 'preSignUp');
 
     // WHEN
-    new UserPool(stack, 'Pool', {
+    const pool = new UserPool(stack, 'Pool', {
       lambdaTriggers: {
         preSignUp: fn,
       },
@@ -327,12 +351,75 @@ describe('User Pool', () => {
       Action: 'lambda:InvokeFunction',
       FunctionName: stack.resolve(fn.functionArn),
       Principal: 'cognito-idp.amazonaws.com',
+      SourceArn: stack.resolve(pool.userPoolArn),
+    });
+  });
+
+  test('custom sender lambda triggers via properties are correctly configured', () => {
+    // GIVEN
+    const stack = new Stack();
+    const kmsKey = fooKey(stack, 'TestKMSKey');
+    const emailFn = fooFunction(stack, 'customEmailSender');
+    const smsFn = fooFunction(stack, 'customSmsSender');
+
+    // WHEN
+    const pool = new UserPool(stack, 'Pool', {
+      customSenderKmsKey: kmsKey,
+      lambdaTriggers: {
+        customEmailSender: emailFn,
+        customSmsSender: smsFn,
+      },
+    });
+
+    // THEN
+    Template.fromStack(stack).hasResourceProperties('AWS::Cognito::UserPool', {
+      LambdaConfig: {
+        CustomEmailSender: {
+          LambdaArn: stack.resolve(emailFn.functionArn),
+          LambdaVersion: 'V1_0',
+        },
+        CustomSMSSender: {
+          LambdaArn: stack.resolve(smsFn.functionArn),
+          LambdaVersion: 'V1_0',
+        },
+      },
+    });
+    Template.fromStack(stack).hasResourceProperties('AWS::Lambda::Permission', {
+      Action: 'lambda:InvokeFunction',
+      FunctionName: stack.resolve(emailFn.functionArn),
+      Principal: 'cognito-idp.amazonaws.com',
+      SourceArn: stack.resolve(pool.userPoolArn),
+    });
+    Template.fromStack(stack).hasResourceProperties('AWS::Lambda::Permission', {
+      Action: 'lambda:InvokeFunction',
+      FunctionName: stack.resolve(smsFn.functionArn),
+      Principal: 'cognito-idp.amazonaws.com',
+      SourceArn: stack.resolve(pool.userPoolArn),
+    });
+  });
+
+  test('lambda trigger KMS Key ID via properties is correctly configured', () => {
+    // GIVEN
+    const stack = new Stack();
+    const kmsKey = fooKey(stack, 'TestKMSKey');
+
+    // WHEN
+    new UserPool(stack, 'Pool', {
+      customSenderKmsKey: kmsKey,
+    });
+
+    // THEN
+    Template.fromStack(stack).hasResourceProperties('AWS::Cognito::UserPool', {
+      LambdaConfig: {
+        KMSKeyID: { 'Fn::GetAtt': ['TestKMSKey32509532', 'Arn'] },
+      },
     });
   });
 
   test('add* API correctly appends triggers', () => {
     // GIVEN
     const stack = new Stack();
+    const kmsKey = fooKey(stack, 'TestKMSKey');
 
     const createAuthChallenge = fooFunction(stack, 'createAuthChallenge');
     const customMessage = fooFunction(stack, 'customMessage');
@@ -344,9 +431,13 @@ describe('User Pool', () => {
     const preTokenGeneration = fooFunction(stack, 'preTokenGeneration');
     const userMigration = fooFunction(stack, 'userMigration');
     const verifyAuthChallengeResponse = fooFunction(stack, 'verifyAuthChallengeResponse');
+    const customEmailSender = fooFunction(stack, 'customEmailSender');
+    const customSmsSender = fooFunction(stack, 'customSmsSender');
 
     // WHEN
-    const pool = new UserPool(stack, 'Pool');
+    const pool = new UserPool(stack, 'Pool', {
+      customSenderKmsKey: kmsKey,
+    });
     pool.addTrigger(UserPoolOperation.CREATE_AUTH_CHALLENGE, createAuthChallenge);
     pool.addTrigger(UserPoolOperation.CUSTOM_MESSAGE, customMessage);
     pool.addTrigger(UserPoolOperation.DEFINE_AUTH_CHALLENGE, defineAuthChallenge);
@@ -357,6 +448,8 @@ describe('User Pool', () => {
     pool.addTrigger(UserPoolOperation.PRE_TOKEN_GENERATION, preTokenGeneration);
     pool.addTrigger(UserPoolOperation.USER_MIGRATION, userMigration);
     pool.addTrigger(UserPoolOperation.VERIFY_AUTH_CHALLENGE_RESPONSE, verifyAuthChallengeResponse);
+    pool.addTrigger(UserPoolOperation.CUSTOM_EMAIL_SENDER, customEmailSender);
+    pool.addTrigger(UserPoolOperation.CUSTOM_SMS_SENDER, customSmsSender);
 
     // THEN
     Template.fromStack(stack).hasResourceProperties('AWS::Cognito::UserPool', {
@@ -371,16 +464,25 @@ describe('User Pool', () => {
         PreTokenGeneration: stack.resolve(preTokenGeneration.functionArn),
         UserMigration: stack.resolve(userMigration.functionArn),
         VerifyAuthChallengeResponse: stack.resolve(verifyAuthChallengeResponse.functionArn),
+        CustomEmailSender: {
+          LambdaArn: stack.resolve(customEmailSender.functionArn),
+          LambdaVersion: 'V1_0',
+        },
+        CustomSMSSender: {
+          LambdaArn: stack.resolve(customSmsSender.functionArn),
+          LambdaVersion: 'V1_0',
+        },
       },
     });
 
     [createAuthChallenge, customMessage, defineAuthChallenge, postAuthentication,
       postConfirmation, preAuthentication, preSignUp, preTokenGeneration, userMigration,
-      verifyAuthChallengeResponse].forEach((fn) => {
+      verifyAuthChallengeResponse, customEmailSender, customSmsSender].forEach((fn) => {
       Template.fromStack(stack).hasResourceProperties('AWS::Lambda::Permission', {
         Action: 'lambda:InvokeFunction',
         FunctionName: stack.resolve(fn.functionArn),
         Principal: 'cognito-idp.amazonaws.com',
+        SourceArn: stack.resolve(pool.userPoolArn),
       });
     });
   });
@@ -392,12 +494,12 @@ describe('User Pool', () => {
 
     const fn1 = new lambda.Function(stack, 'fn1', {
       code: lambda.Code.fromInline('foo'),
-      runtime: lambda.Runtime.NODEJS_12_X,
+      runtime: lambda.Runtime.NODEJS_14_X,
       handler: 'index.handler',
     });
     const fn2 = new lambda.Function(stack, 'fn2', {
       code: lambda.Code.fromInline('foo'),
-      runtime: lambda.Runtime.NODEJS_12_X,
+      runtime: lambda.Runtime.NODEJS_14_X,
       handler: 'index.handler',
     });
 
@@ -903,7 +1005,7 @@ describe('User Pool', () => {
     })).toThrow(/minLength for password must be between/);
   });
 
-  test('email transmission settings are recognized correctly', () => {
+  testDeprecated('email transmission settings are recognized correctly', () => {
     // GIVEN
     const stack = new Stack();
 
@@ -1368,7 +1470,7 @@ describe('User Pool', () => {
     });
   });
 
-  test('email transmission with cyrillic characters are encoded', () => {
+  testDeprecated('email transmission with cyrillic characters are encoded', () => {
     // GIVEN
     const stack = new Stack();
 
@@ -1626,7 +1728,8 @@ describe('User Pool', () => {
     });
 
   });
-  test('email withSES invalid region throws error', () => {
+
+  test('email withSES with verified domain', () => {
     // GIVEN
     const stack = new Stack(undefined, undefined, {
       env: {
@@ -1636,36 +1739,64 @@ describe('User Pool', () => {
     });
 
     // WHEN
-    expect(() => new UserPool(stack, 'Pool', {
+    new UserPool(stack, 'Pool', {
       email: UserPoolEmail.withSES({
         fromEmail: 'mycustomemail@example.com',
         fromName: 'My Custom Email',
+        sesRegion: 'us-east-1',
         replyTo: 'reply@example.com',
         configurationSetName: 'default',
+        sesVerifiedDomain: 'example.com',
       }),
-    })).toThrow(/Please provide a valid value/);
+    });
 
+    // THEN
+    Template.fromStack(stack).hasResourceProperties('AWS::Cognito::UserPool', {
+      EmailConfiguration: {
+        EmailSendingAccount: 'DEVELOPER',
+        From: 'My Custom Email <mycustomemail@example.com>',
+        ReplyToEmailAddress: 'reply@example.com',
+        ConfigurationSet: 'default',
+        SourceArn: {
+          'Fn::Join': [
+            '',
+            [
+              'arn:',
+              {
+                Ref: 'AWS::Partition',
+              },
+              ':ses:us-east-1:11111111111:identity/example.com',
+            ],
+          ],
+        },
+      },
+    });
   });
 
-  test('email withSES invalid sesRegion throws error', () => {
+  test('email withSES throws, when "fromEmail" contains the different domain', () => {
     // GIVEN
     const stack = new Stack(undefined, undefined, {
       env: {
+        region: 'us-east-2',
         account: '11111111111',
       },
     });
 
+    expect(() => new UserPool(stack, 'Pool1', {
+      mfaMessage: '{####',
+    })).toThrow(/MFA message must contain the template string/);
+
     // WHEN
     expect(() => new UserPool(stack, 'Pool', {
       email: UserPoolEmail.withSES({
-        sesRegion: 'us-east-2',
-        fromEmail: 'mycustomemail@example.com',
+        fromEmail: 'mycustomemail@some.com',
         fromName: 'My Custom Email',
+        sesRegion: 'us-east-1',
         replyTo: 'reply@example.com',
         configurationSetName: 'default',
+        sesVerifiedDomain: 'example.com',
       }),
-    })).toThrow(/sesRegion must be one of/);
-
+    })).toThrow(/"fromEmail" contains a different domain than the "sesVerifiedDomain"/);
   });
 });
 
@@ -1690,12 +1821,77 @@ test('device tracking is configured correctly', () => {
   });
 });
 
+test('keep original attrs is configured correctly', () => {
+  // GIVEN
+  const stack = new Stack();
+
+  // WHEN
+  new UserPool(stack, 'Pool', {
+    signInAliases: { username: true },
+    autoVerify: { email: true, phone: true },
+    keepOriginal: {
+      email: true,
+      phone: true,
+    },
+  });
+
+  // THEN
+  Template.fromStack(stack).hasResourceProperties('AWS::Cognito::UserPool', {
+    UserAttributeUpdateSettings: {
+      AttributesRequireVerificationBeforeUpdate: ['email', 'phone_number'],
+    },
+  });
+});
+
+test('grant', () => {
+  // GIVEN
+  const stack = new Stack();
+  const role = new Role(stack, 'Role', {
+    assumedBy: new ServicePrincipal('lambda.amazonaws.com'),
+  });
+
+  // WHEN
+  const userPool = new UserPool(stack, 'Pool');
+  userPool.grant(role, 'cognito-idp:AdminCreateUser', 'cognito-idp:ListUsers');
+
+  // THEN
+  Template.fromStack(stack).hasResourceProperties('AWS::IAM::Policy', {
+    PolicyDocument: {
+      Statement: [
+        {
+          Action: [
+            'cognito-idp:AdminCreateUser',
+            'cognito-idp:ListUsers',
+          ],
+          Effect: 'Allow',
+          Resource: {
+            'Fn::GetAtt': [
+              'PoolD3F588B8',
+              'Arn',
+            ],
+          },
+        },
+      ],
+      Version: '2012-10-17',
+    },
+    Roles: [
+      {
+        Ref: 'Role1ABCC5F0',
+      },
+    ],
+  });
+
+});
 
 function fooFunction(scope: Construct, name: string): lambda.IFunction {
   return new lambda.Function(scope, name, {
     functionName: name,
     code: lambda.Code.fromInline('foo'),
-    runtime: lambda.Runtime.NODEJS_12_X,
+    runtime: lambda.Runtime.NODEJS_14_X,
     handler: 'index.handler',
   });
+}
+
+function fooKey(scope: Construct, name: string): kms.Key {
+  return new kms.Key(scope, name);
 }
