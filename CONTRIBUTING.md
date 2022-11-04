@@ -14,6 +14,8 @@ This document describes how to set up a development environment and submit your 
 let us know if it's not up-to-date (even better, submit a PR with your  corrections ;-)).
 
 - [Getting Started](#getting-started)
+  - [Local setup](#setup)
+  - [Dev Container](#dev-container)
 - [Pull Requests](#pull-requests)
   - [Step 1: Find something to work on](#step-1-find-something-to-work-on)
   - [Step 2: Design (optional)](#step-2-design)
@@ -23,7 +25,7 @@ let us know if it's not up-to-date (even better, submit a PR with your  correcti
 - [Breaking Changes](#breaking-changes)
 - [Documentation](#documentation)
   - [Rosetta](#rosetta)
-- [Tools](#tools)
+- [Tools](#tools-advanced)
   - [Linters](#linters)
   - [cfn2ts](#cfn2ts)
   - [scripts/foreach.sh](#scriptsforeachsh)
@@ -42,6 +44,7 @@ let us know if it's not up-to-date (even better, submit a PR with your  correcti
 - [Debugging](#debugging)
   - [Connecting the VS Code Debugger](#connecting-the-vs-code-debugger)
   - [Run a CDK unit test in the debugger](#run-a-cdk-unit-test-in-the-debugger)
+- [Badges (Pilot Program)](#badges-pilot-program)
 - [Related Repositories](#related-repositories)
 
 ## Getting Started
@@ -146,7 +149,14 @@ docker$ exit
 
 The `dist/` folder within each module contains the packaged up language artifacts.
 
-## Gitpod (Alternative)
+### Dev Container
+
+The AWS CDK provides a VS Code Dev Container with all dependencies pre-installed.
+Please follow the [setup instructions](https://code.visualstudio.com/docs/remote/containers-tutorial) to configure VS Code.
+
+With VS Code setup, you will be prompted to open the `aws-cdk` repo in a Dev Container, or you can choos "Dev Containers: Reopen in Container" from the VS Code command palette.
+
+### Gitpod (Alternative)
 
 You may also set up your local development environment using [Gitpod](http://gitpod.io) -
 a service that allows you to spin up an in-browser Visual Studio Code-compatible editor,
@@ -256,7 +266,7 @@ Work your magic. Here are some guidelines:
 
 Integration tests perform a few functions in the CDK code base -
 1. Acts as a regression detector. It does this by running `cdk synth` on the integration test and comparing it against
-   the `*.integ.snapshot` directory. This highlights how a change affects the synthesized stacks.
+   the `*.snapshot` directory. This highlights how a change affects the synthesized stacks.
 2. Allows for a way to verify if the stacks are still valid CloudFormation templates, as part of an intrusive change.
    This is done by running `yarn integ` which will run `cdk deploy` across all of the integration tests in that package. If you are developing a new integration test or for some other reason want to work on a single integration test over and over again without running through all the integration tests you can do so using `yarn integ integ.test-name.js`
    Remember to set up AWS credentials before doing this.
@@ -267,10 +277,10 @@ Integration tests perform a few functions in the CDK code base -
 
 The following list contains common scenarios where we _know_ that integration tests are required.
 This is not an exhaustive list and we will, by default, require integration tests for all
-new features unless there is a good reason why one is not needed.
+new features and all fixes unless there is a good reason why one is not needed.
 
-1. Adding a new feature that is using previously unused CloudFormation resource types
-2. Adding a new feature that is using previously unused (or untested) CloudFormation properties
+1. Adding a new feature
+2. Adding a fix to an existing feature
 3. Involves configuring resource types across services (i.e. integrations)
 4. Adding a new supported version (e.g. a new [AuroraMysqlEngineVersion](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.aws_rds.AuroraMysqlEngineVersion.html))
 5. Adding any functionality via a [Custom Resource](https://docs.aws.amazon.com/cdk/api/v2/docs/aws-cdk-lib.custom_resources-readme.html)
@@ -943,9 +953,17 @@ changes are only allowed in major versions and those are rare.
 To address this need, we have a feature flags pattern/mechanism. It allows us to
 introduce new breaking behavior which is disabled by default (so existing
 projects will not be affected) but enabled automatically for new projects
-created through `cdk init`.
+created through `cdk init`. Existing users can selectively opt in to new
+behavior on their own schedule.
 
-The pattern is simple:
+Whenever a change leads to CloudFormation template differences that cause any of
+the following during an update, it is not safe to apply the new behavior
+automatically, and we have to use a feature flag:
+
+- Resources replacement leading to service disruption; or
+- Users could have taken assumptions on the old setup and the change will break them.
+
+Adding a new flag looks as follows:
 
 1. Define a new const under
    [cx-api/lib/features.ts](https://github.com/aws/aws-cdk/blob/main/packages/%40aws-cdk/cx-api/lib/features.ts)
@@ -954,10 +972,11 @@ The pattern is simple:
    form `module.Type:feature` (e.g. `@aws-cdk/core:enableStackNameDuplicates`).
 2. Use `FeatureFlags.of(construct).isEnabled(cxapi.ENABLE_XXX)` to check if this feature is enabled
    in your code. If it is not defined, revert to the legacy behavior.
-3. Add your feature flag to the `FUTURE_FLAGS` map in
-   [cx-api/lib/features.ts](https://github.com/aws/aws-cdk/blob/main/packages/%40aws-cdk/cx-api/lib/features.ts).
-   This map is inserted to generated `cdk.json` files for new projects created
-   through `cdk init`.
+3. Add your feature flag to the `FLAGS` map in
+   [cx-api/lib/features.ts](https://github.com/aws/aws-cdk/blob/main/packages/%40aws-cdk/cx-api/lib/features.ts). In
+   your description, be sure to cover the following:
+   - Consciously pick the type of feature flag. Can the flag be removed in a future major version, or not?
+   - Motivate why the feature flag exists. What is the change to existing infrastructure and why is it not safe?
 4. Add an entry for your feature flag in the [README](https://github.com/aws/aws-cdk/blob/main/packages/%40aws-cdk/cx-api/README.md) file.
 5. In your tests, ensure that you test your feature with and without the feature flag enabled. You can do this by passing the feature flag to the `context` property when instantiating an `App`.
    ```ts
@@ -1115,6 +1134,24 @@ $ node --inspect-brk /path/to/aws-cdk/node_modules/.bin/jest -i -t 'TESTNAME'
 ```
 
 3. On the `Run` pane of VSCode, select the run configuration **Attach to NodeJS** and click the button.
+
+## Badges (Pilot Program)
+
+> CDK Merit Badges is a Pilot Program. The badges you get are experimental and may change.
+
+CDK Merit Badges is a program aimed at enhancing the CDK contributor experience. When you
+submit new pull requests to the CDK repository, you will receive a merit badge that reflects
+how many prior successful contributions you have to the repository. Right now, these badges
+are just for fun and are meant as a small incentive to continued contributions to the CDK.
+
+The badges have the following meaning:
+
+- `beginning-contributor`: contributed between 0-2 PRs to the CDK
+- `repeat-contributor`: contributed between 3-5 PRs to the CDK
+- `valued-contributor`: contributed between 6-12 PRs to the CDK
+- `admired-contributor`: contributed between 13-24 PRs to the CDK
+- `star-contributor`: contributed between 25-49 PRs to the CDK
+- `distinguished-contributor`: contributed 50+ PRs to the CDK
 
 ## Related Repositories
 
